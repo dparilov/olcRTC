@@ -90,6 +90,14 @@ Build a basic Android APK around the existing `mobile/mobile.go` olcRTC binding 
 8. Add speedtests placeholders/integration
 9. Build first debug APK
 
+## Validation order (updated after Linux controlled test work)
+Before relying on Android-side observations, validate in this order:
+1. Linux controlled testbed baseline
+2. Android emulator controlled run
+3. Real Android device controlled run
+
+Each validation step should use a **clean Telemost room** when possible to avoid stale participant/reconnect artifacts.
+
 ## Progress status (2026-04-12)
 
 ### Completed
@@ -114,6 +122,16 @@ Build a basic Android APK around the existing `mobile/mobile.go` olcRTC binding 
 - `link: github.com/wlynxg/anet: invalid reference to net.zoneCache`
 
 This means the remaining blocker is no longer environment setup, but code adaptation for Android/mobile build compatibility.
+
+### Important context after Linux validation
+On 2026-04-13 the Linux transport baseline was validated much more deeply, including:
+- successful clean-room controlled tunnel tests
+- expanded diagnostics
+- throughput measurements
+- shutdown hygiene fixes
+- reconnect/presence hygiene fixes
+
+So the next Android phase should be executed against a cleaner and much better understood transport baseline than before.
 
 ### Secondary lessons learned
 - `gomobile bind` required explicit Android API selection (`21+`) because default API selection conflicted with the installed NDK range.
