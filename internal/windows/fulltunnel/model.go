@@ -53,6 +53,22 @@ type CommandSpec struct {
 	Requires   []string
 }
 
+// CommandPhase distinguishes forward execution from rollback work.
+type CommandPhase string
+
+const (
+	CommandPhaseApply    CommandPhase = "apply"
+	CommandPhaseRollback CommandPhase = "rollback"
+)
+
+// CommandResult summarizes one command attempt.
+type CommandResult struct {
+	ExitCode int
+	Stdout   string
+	Stderr   string
+	DryRun   bool
+}
+
 // AdapterConfig declares the target adapter state once real Windows support is
 // implemented.
 type AdapterConfig struct {
@@ -110,8 +126,10 @@ type RouteOperationState string
 
 const (
 	RouteOperationPlanned        RouteOperationState = "planned"
+	RouteOperationApplying       RouteOperationState = "applying"
 	RouteOperationApplied        RouteOperationState = "applied"
 	RouteOperationCleanupPending RouteOperationState = "cleanup_pending"
+	RouteOperationCleanupRunning RouteOperationState = "cleanup_running"
 	RouteOperationCleaned        RouteOperationState = "cleaned"
 	RouteOperationSkipped        RouteOperationState = "skipped"
 	RouteOperationFailed         RouteOperationState = "failed"
@@ -129,6 +147,14 @@ type RouteOperationStatus struct {
 	InterfaceLUID uint64
 	Command       CommandSpec
 	State         RouteOperationState
+	Attempts      int
+	LastExitCode  int
+	StartedAt     time.Time
+	CompletedAt   time.Time
+	Stdout        string
+	Stderr        string
+	LastError     string
+	DryRun        bool
 	Note          string
 }
 
@@ -141,6 +167,14 @@ type RollbackStatus struct {
 	InterfaceLUID uint64
 	Command       CommandSpec
 	State         RouteOperationState
+	Attempts      int
+	LastExitCode  int
+	StartedAt     time.Time
+	CompletedAt   time.Time
+	Stdout        string
+	Stderr        string
+	LastError     string
+	DryRun        bool
 	Note          string
 }
 

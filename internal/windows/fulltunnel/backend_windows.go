@@ -14,7 +14,10 @@ func newPlatformAdapterBackend(logger Logger) AdapterBackend {
 }
 
 func newPlatformRouteBackend(logger Logger) RouteBackend {
-	return windowsRouteBackend{log: logger}
+	return windowsRouteBackend{
+		log:    logger,
+		runner: dryRunCommandRunner{log: logger},
+	}
 }
 
 type wintunAdapterBackend struct {
@@ -105,14 +108,19 @@ func (h *wintunAdapterHandle) Close(context.Context) error {
 }
 
 type windowsRouteBackend struct {
-	log Logger
+	log    Logger
+	runner CommandRunner
 }
 
-func (b windowsRouteBackend) ApplyRoutes(_ context.Context, adapter AdapterStatus, plan RoutePlan) (RouteHandle, error) {
-	handle := newWindowsRouteHandle(adapter, plan)
+func (b windowsRouteBackend) ApplyRoutes(ctx context.Context, adapter AdapterStatus, plan RoutePlan) (RouteHandle, error) {
+	if b.runner == nil {
+		b.runner = dryRunCommandRunner{log: b.log}
+	}
+
+	handle := newWindowsRouteHandle(b.log, b.runner, adapter, plan)
 	status := handle.Status()
 	b.log.Printf(
-		"full-tunnel: Windows route scaffold planned mode=%q adapter=%q ipv4_ops=%d ipv6_ops=%d dns=%d rollback=%d default=%v",
+		"full-tunnel: Windows route runner planned mode=%q adapter=%q ipv4_ops=%d ipv6_ops=%d dns=%d rollback=%d default=%v",
 		plan.Mode,
 		adapter.Name,
 		countRouteFamily(status.Operations, "ipv4"),
@@ -121,8 +129,10 @@ func (b windowsRouteBackend) ApplyRoutes(_ context.Context, adapter AdapterStatu
 		len(status.Rollback),
 		plan.RequiresDefault,
 	)
-	handle.markFailed(fmt.Errorf("%w: Windows route application is not implemented", ErrNotImplemented))
-	return handle, fmt.Errorf("%w: Windows route application is not implemented", ErrNotImplemented)
+	if err := handle.Apply(ctx); err != nil {
+		return handle, err
+	}
+	return handle, nil
 }
 
 func countRouteFamily(operations []RouteOperationStatus, family string) int {

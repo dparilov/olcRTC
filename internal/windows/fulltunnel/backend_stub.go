@@ -25,7 +25,7 @@ func (unsupportedAdapterBackend) EnsureAdapter(_ context.Context, _ AdapterConfi
 type unsupportedRouteBackend struct{}
 
 func (unsupportedRouteBackend) ApplyRoutes(_ context.Context, adapter AdapterStatus, plan RoutePlan) (RouteHandle, error) {
-	handle := newWindowsRouteHandle(adapter, plan)
+	handle := newWindowsRouteHandle(nil, nil, adapter, plan)
 	handle.markFailed(fmt.Errorf("%w: Windows full-tunnel route backend is unavailable on %s", ErrNotImplemented, runtime.GOOS))
 	return handle, fmt.Errorf("%w: Windows full-tunnel route backend is unavailable on %s", ErrNotImplemented, runtime.GOOS)
 }
