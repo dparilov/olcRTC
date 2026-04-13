@@ -6,6 +6,24 @@ import (
 	"testing"
 )
 
+func TestNormalizeAdapterProvider(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{name: "default empty", input: "", expected: wintunProvider},
+		{name: "trim and lowercase", input: "  WinTun  ", expected: wintunProvider},
+		{name: "other provider", input: "wireguard", expected: "wireguard"},
+	}
+
+	for _, test := range tests {
+		if actual := normalizeAdapterProvider(test.input); actual != test.expected {
+			t.Fatalf("%s: normalizeAdapterProvider(%q) = %q, want %q", test.name, test.input, actual, test.expected)
+		}
+	}
+}
+
 func TestManagerStartStopSuccess(t *testing.T) {
 	adapter := &fakeAdapterBackend{
 		handle: &fakeAdapterHandle{

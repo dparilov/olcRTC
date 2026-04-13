@@ -4,7 +4,9 @@ package fulltunnel
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 )
 
 func newPlatformAdapterBackend(logger Logger) AdapterBackend {
@@ -19,9 +21,87 @@ type wintunAdapterBackend struct {
 	log Logger
 }
 
-func (b wintunAdapterBackend) EnsureAdapter(_ context.Context, cfg AdapterConfig) (AdapterHandle, error) {
-	b.log.Printf("full-tunnel: Wintun scaffold placeholder adapter=%q mtu=%d addresses=%v", cfg.Name, cfg.MTU, cfg.Addresses)
-	return nil, fmt.Errorf("%w: Wintun adapter provisioning is not implemented", ErrNotImplemented)
+func (b wintunAdapterBackend) EnsureAdapter(ctx context.Context, cfg AdapterConfig) (AdapterHandle, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	provider := normalizeAdapterProvider(cfg.Provider)
+	if provider != wintunProvider {
+		return nil, fmt.Errorf("%w: %q", ErrUnsupportedAdapterProvider, cfg.Provider)
+	}
+
+	name := strings.TrimSpace(cfg.Name)
+	if name == "" {
+		return nil, errors.New("adapter name is required")
+	}
+
+	probe, err := ProbeWintun()
+	if err != nil {
+		return nil, err
+	}
+
+	dll, err := loadWintun()
+	if err != nil {
+		return nil, err
+	}
+
+	adapter, existing, err := dll.openOrCreateAdapter(name, defaultWintunTunnelType)
+	if err != nil {
+		return nil, err
+	}
+
+	status := AdapterStatus{
+		Name:       name,
+		Provider:   provider,
+		Addresses:  append([]string(nil), cfg.Addresses...),
+		Existing:   existing,
+		NativeLUID: dll.adapterLUID(adapter),
+	}
+	handle := &wintunAdapterHandle{
+		dll:     dll,
+		adapter: adapter,
+		status:  status,
+	}
+
+	if err := ctx.Err(); err != nil {
+		handle.Close(context.Background())
+		return nil, err
+	}
+
+	b.log.Printf(
+		"full-tunnel: Wintun adapter ready name=%q existing=%t luid=%d mtu=%d addresses=%v exports=%v",
+		status.Name,
+		status.Existing,
+		status.NativeLUID,
+		cfg.MTU,
+		cfg.Addresses,
+		probe.Exports,
+	)
+	return handle, nil
+}
+
+type wintunAdapterHandle struct {
+	dll     *wintunDLL
+	adapter uintptr
+	status  AdapterStatus
+	closed  bool
+}
+
+func (h *wintunAdapterHandle) Status() AdapterStatus {
+	return cloneAdapterStatus(h.status)
+}
+
+func (h *wintunAdapterHandle) Close(context.Context) error {
+	if h == nil || h.closed || h.adapter == 0 {
+		return nil
+	}
+
+	h.dll.closeAdapter(h.adapter)
+	h.closed = true
+	h.adapter = 0
+	h.status.Ready = false
+	return nil
 }
 
 type windowsRouteBackend struct {

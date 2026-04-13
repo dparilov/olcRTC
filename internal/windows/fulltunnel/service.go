@@ -14,6 +14,14 @@ var (
 	// future Windows integration point but do not yet perform system changes.
 	ErrNotImplemented = errors.New("full-tunnel scaffold placeholder")
 
+	// ErrUnsupportedAdapterProvider is returned when the requested adapter
+	// provider does not match the currently implemented Windows backend.
+	ErrUnsupportedAdapterProvider = errors.New("unsupported tunnel adapter provider")
+
+	// ErrWintunUnavailable is returned when the Wintun DLL or required exports
+	// are not available on the host.
+	ErrWintunUnavailable = errors.New("wintun integration is unavailable")
+
 	// ErrAlreadyStarted is returned when Start is called while the lifecycle is
 	// already active.
 	ErrAlreadyStarted = errors.New("full-tunnel lifecycle already started")

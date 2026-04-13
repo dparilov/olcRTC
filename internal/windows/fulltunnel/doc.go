@@ -1,7 +1,7 @@
 // Package fulltunnel defines the Windows full-tunnel lifecycle scaffold.
 //
 // This package is intentionally separate from the existing SOCKS-based client
-// runtime. It provides the structure, status model, and backend seams needed
-// for future Windows adapter management and route control work without claiming
-// that packet transport or OS networking is already implemented.
+// runtime. It now includes a Windows-only Wintun probe plus adapter open/create
+// and close scaffolding, while route control, address assignment, DNS, and
+// packet transport remain explicitly unfinished.
 package fulltunnel

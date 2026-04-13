@@ -56,10 +56,12 @@ type AdapterConfig struct {
 
 // AdapterStatus is safe for UI/log consumption.
 type AdapterStatus struct {
-	Name      string
-	Provider  string
-	Addresses []string
-	Ready     bool
+	Name       string
+	Provider   string
+	Addresses  []string
+	Existing   bool
+	NativeLUID uint64
+	Ready      bool
 }
 
 // RoutePlan declares the desired route lifecycle once Windows route control is
