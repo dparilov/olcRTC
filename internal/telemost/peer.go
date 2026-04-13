@@ -53,10 +53,11 @@ type Peer struct {
 	reconnectMu     sync.Mutex
 	sessionMu       sync.Mutex
 	sendQueue       chan []byte
-	sendQueueClosed atomic.Bool
-	closed          atomic.Bool
-	reconnecting    atomic.Bool
-	telemetryActive atomic.Bool
+	sendQueueClosed  atomic.Bool
+	closed           atomic.Bool
+	reconnecting     atomic.Bool
+	shuttingDown     atomic.Bool
+	telemetryActive  atomic.Bool
 	ackMu           sync.Mutex
 	ackWaiters      map[string]chan struct{}
 	onEnded         func(string)
@@ -128,7 +129,7 @@ func closeSignal(ch chan struct{}) {
 }
 
 func (p *Peer) queueReconnect() {
-	if p.closed.Load() || p.reconnecting.Load() {
+	if p.closed.Load() || p.reconnecting.Load() || p.shuttingDown.Load() {
 		return
 	}
 	select {
@@ -236,11 +237,11 @@ func (p *Peer) Connect(ctx context.Context) error {
 
 	p.dc.OnClose(func() {
 		log.Println("DataChannel closed")
-		if p.onReconnect != nil {
+		if !p.shuttingDown.Load() && p.onReconnect != nil {
 			log.Println("Calling reconnect callback for cleanup")
 			p.onReconnect(nil)
 		}
-		if !p.closed.Load() {
+		if !p.closed.Load() && !p.shuttingDown.Load() {
 			p.queueReconnect()
 		}
 	})
@@ -254,6 +255,10 @@ func (p *Peer) Connect(ctx context.Context) error {
 	p.pcSub.OnDataChannel(func(dc *webrtc.DataChannel) {
 		log.Printf("Received datachannel: %s", dc.Label())
 		dc.OnClose(func() {
+			if p.shuttingDown.Load() {
+				log.Println("Received DataChannel closed during intentional shutdown")
+				return
+			}
 			log.Println("Received DataChannel closed - triggering reconnect")
 			if !p.closed.Load() {
 				p.queueReconnect()
@@ -381,6 +386,10 @@ func (p *Peer) handleSignaling() {
 	for {
 		var msg map[string]interface{}
 		if err := p.ws.ReadJSON(&msg); err != nil {
+			if p.shuttingDown.Load() || p.closed.Load() {
+				log.Printf("WS read closed during shutdown: %v", err)
+				return
+			}
 			log.Printf("WS read error: %v", err)
 			if !p.closed.Load() {
 				p.queueReconnect()
@@ -814,26 +823,32 @@ func (p *Peer) sendLeave(uid string) bool {
 	return true
 }
 
+func (p *Peer) gracefulLeave(timeout time.Duration) {
+	log.Println("Sending leave message...")
+	leaveUID := uuid.New().String()
+	leaveAck := p.registerAckWaiter(leaveUID)
+	if p.sendLeave(leaveUID) {
+		if p.waitForAck(leaveUID, leaveAck, timeout) {
+			log.Println("Leave acknowledged")
+		} else {
+			log.Println("Leave ack timeout")
+		}
+	} else {
+		p.removeAckWaiter(leaveUID)
+	}
+}
+
 func (p *Peer) Close() error {
 	log.Println("Closing peer connection...")
+
+	p.shuttingDown.Store(true)
+	defer p.shuttingDown.Store(false)
 
 	alreadyClosing := p.closed.Swap(true)
 	p.sendQueueClosed.Store(true)
 
 	if !alreadyClosing {
-		log.Println("Sending leave message...")
-		leaveUID := uuid.New().String()
-		leaveAck := p.registerAckWaiter(leaveUID)
-		if p.sendLeave(leaveUID) {
-			if p.waitForAck(leaveUID, leaveAck, 1500*time.Millisecond) {
-				log.Println("Leave acknowledged")
-			} else {
-				log.Println("Leave ack timeout")
-			}
-		} else {
-			p.removeAckWaiter(leaveUID)
-		}
-
+		p.gracefulLeave(1500 * time.Millisecond)
 		p.stopTelemetry()
 	}
 
@@ -932,10 +947,13 @@ func (p *Peer) keepAlive(keepAliveCh <-chan struct{}) {
 func (p *Peer) reconnect(ctx context.Context) error {
 	log.Println("Reconnecting...")
 	p.reconnecting.Store(true)
+	p.shuttingDown.Store(true)
 	defer p.reconnecting.Store(false)
+	defer p.shuttingDown.Store(false)
 
-	p.sendLeave(uuid.New().String())
-	time.Sleep(500 * time.Millisecond)
+	p.stopTelemetry()
+	p.gracefulLeave(2 * time.Second)
+	time.Sleep(1500 * time.Millisecond)
 
 	p.stopSession()
 
