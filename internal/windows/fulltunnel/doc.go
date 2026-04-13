@@ -2,6 +2,7 @@
 //
 // This package is intentionally separate from the existing SOCKS-based client
 // runtime. It now includes a Windows-only Wintun probe plus adapter open/create
-// and close scaffolding, while route control, address assignment, DNS, and
-// packet transport remain explicitly unfinished.
+// and close scaffolding plus explicit route/DNS command planning and rollback
+// models. Windows route execution, previous-state capture, address assignment,
+// and packet transport remain explicitly unfinished.
 package fulltunnel

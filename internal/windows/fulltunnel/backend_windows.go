@@ -108,19 +108,39 @@ type windowsRouteBackend struct {
 	log Logger
 }
 
-func (b windowsRouteBackend) ApplyRoutes(_ context.Context, plan RoutePlan) (RouteStatus, error) {
-	b.log.Printf("full-tunnel: Windows route scaffold placeholder mode=%q ipv4=%v ipv6=%v dns=%v rollback=%v default=%v", plan.Mode, plan.IPv4CIDRs, plan.IPv6CIDRs, plan.DNSServers, plan.AllowRollback, plan.RequiresDefault)
-	return RouteStatus{
-		Mode:            plan.Mode,
-		IPv4CIDRs:       append([]string(nil), plan.IPv4CIDRs...),
-		IPv6CIDRs:       append([]string(nil), plan.IPv6CIDRs...),
-		DNSServers:      append([]string(nil), plan.DNSServers...),
-		AllowRollback:   plan.AllowRollback,
-		RequiresDefault: plan.RequiresDefault,
-	}, fmt.Errorf("%w: Windows route application is not implemented", ErrNotImplemented)
+func (b windowsRouteBackend) ApplyRoutes(_ context.Context, adapter AdapterStatus, plan RoutePlan) (RouteHandle, error) {
+	handle := newWindowsRouteHandle(adapter, plan)
+	status := handle.Status()
+	b.log.Printf(
+		"full-tunnel: Windows route scaffold planned mode=%q adapter=%q ipv4_ops=%d ipv6_ops=%d dns=%d rollback=%d default=%v",
+		plan.Mode,
+		adapter.Name,
+		countRouteFamily(status.Operations, "ipv4"),
+		countRouteFamily(status.Operations, "ipv6"),
+		countOperationKind(status.Operations, RouteOperationSetDNS),
+		len(status.Rollback),
+		plan.RequiresDefault,
+	)
+	handle.markFailed(fmt.Errorf("%w: Windows route application is not implemented", ErrNotImplemented))
+	return handle, fmt.Errorf("%w: Windows route application is not implemented", ErrNotImplemented)
 }
 
-func (b windowsRouteBackend) Cleanup(_ context.Context) error {
-	b.log.Printf("full-tunnel: Windows route cleanup placeholder invoked")
-	return nil
+func countRouteFamily(operations []RouteOperationStatus, family string) int {
+	count := 0
+	for _, operation := range operations {
+		if operation.Kind == RouteOperationAddRoute && operation.Family == family {
+			count++
+		}
+	}
+	return count
+}
+
+func countOperationKind(operations []RouteOperationStatus, kind RouteOperationKind) int {
+	count := 0
+	for _, operation := range operations {
+		if operation.Kind == kind {
+			count++
+		}
+	}
+	return count
 }

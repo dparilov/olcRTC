@@ -24,17 +24,8 @@ func (unsupportedAdapterBackend) EnsureAdapter(_ context.Context, _ AdapterConfi
 
 type unsupportedRouteBackend struct{}
 
-func (unsupportedRouteBackend) ApplyRoutes(_ context.Context, plan RoutePlan) (RouteStatus, error) {
-	return RouteStatus{
-		Mode:            plan.Mode,
-		IPv4CIDRs:       append([]string(nil), plan.IPv4CIDRs...),
-		IPv6CIDRs:       append([]string(nil), plan.IPv6CIDRs...),
-		DNSServers:      append([]string(nil), plan.DNSServers...),
-		AllowRollback:   plan.AllowRollback,
-		RequiresDefault: plan.RequiresDefault,
-	}, fmt.Errorf("%w: Windows full-tunnel route backend is unavailable on %s", ErrNotImplemented, runtime.GOOS)
-}
-
-func (unsupportedRouteBackend) Cleanup(context.Context) error {
-	return nil
+func (unsupportedRouteBackend) ApplyRoutes(_ context.Context, adapter AdapterStatus, plan RoutePlan) (RouteHandle, error) {
+	handle := newWindowsRouteHandle(adapter, plan)
+	handle.markFailed(fmt.Errorf("%w: Windows full-tunnel route backend is unavailable on %s", ErrNotImplemented, runtime.GOOS))
+	return handle, fmt.Errorf("%w: Windows full-tunnel route backend is unavailable on %s", ErrNotImplemented, runtime.GOOS)
 }

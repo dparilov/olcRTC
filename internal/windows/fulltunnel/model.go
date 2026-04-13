@@ -45,6 +45,14 @@ type Snapshot struct {
 	UpdatedAt     time.Time
 }
 
+// CommandSpec models a Windows-facing command invocation without claiming that
+// the package already executes it.
+type CommandSpec struct {
+	Executable string
+	Args       []string
+	Requires   []string
+}
+
 // AdapterConfig declares the target adapter state once real Windows support is
 // implemented.
 type AdapterConfig struct {
@@ -75,8 +83,70 @@ type RoutePlan struct {
 	RequiresDefault bool
 }
 
+// RouteState summarizes where route control sits in its own lifecycle.
+type RouteState string
+
+const (
+	RouteStateIdle            RouteState = "idle"
+	RouteStatePlanned         RouteState = "planned"
+	RouteStateApplying        RouteState = "applying"
+	RouteStateApplied         RouteState = "applied"
+	RouteStateRollbackPending RouteState = "rollback_pending"
+	RouteStateRolledBack      RouteState = "rolled_back"
+	RouteStateCleaned         RouteState = "cleaned"
+	RouteStateFailed          RouteState = "failed"
+)
+
+// RouteOperationKind describes the Windows control action the scaffold tracks.
+type RouteOperationKind string
+
+const (
+	RouteOperationAddRoute RouteOperationKind = "add_route"
+	RouteOperationSetDNS   RouteOperationKind = "set_dns"
+)
+
+// RouteOperationState tracks the state of an individual Windows control step.
+type RouteOperationState string
+
+const (
+	RouteOperationPlanned        RouteOperationState = "planned"
+	RouteOperationApplied        RouteOperationState = "applied"
+	RouteOperationCleanupPending RouteOperationState = "cleanup_pending"
+	RouteOperationCleaned        RouteOperationState = "cleaned"
+	RouteOperationSkipped        RouteOperationState = "skipped"
+	RouteOperationFailed         RouteOperationState = "failed"
+)
+
+// RouteOperationStatus captures one Windows route or DNS action plus the
+// command shape that will eventually execute it.
+type RouteOperationStatus struct {
+	Kind          RouteOperationKind
+	Family        string
+	Target        string
+	Via           string
+	Metric        int
+	Interface     string
+	InterfaceLUID uint64
+	Command       CommandSpec
+	State         RouteOperationState
+	Note          string
+}
+
+// RollbackStatus captures the corresponding Windows cleanup action.
+type RollbackStatus struct {
+	Kind          RouteOperationKind
+	Family        string
+	Target        string
+	Interface     string
+	InterfaceLUID uint64
+	Command       CommandSpec
+	State         RouteOperationState
+	Note          string
+}
+
 // RouteStatus is safe for UI/log consumption.
 type RouteStatus struct {
+	State           RouteState
 	Mode            RouteMode
 	IPv4CIDRs       []string
 	IPv6CIDRs       []string
@@ -84,6 +154,10 @@ type RouteStatus struct {
 	Applied         bool
 	AllowRollback   bool
 	RequiresDefault bool
+	Operations      []RouteOperationStatus
+	Rollback        []RollbackStatus
+	CleanupRequired bool
+	LastError       string
 }
 
 // StartRequest groups the intended adapter and route work for a future

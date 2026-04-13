@@ -40,7 +40,12 @@ type AdapterBackend interface {
 
 // RouteBackend applies and rolls back Windows routes.
 type RouteBackend interface {
-	ApplyRoutes(context.Context, RoutePlan) (RouteStatus, error)
+	ApplyRoutes(context.Context, AdapterStatus, RoutePlan) (RouteHandle, error)
+}
+
+// RouteHandle tracks planned/applied route control state and cleanup.
+type RouteHandle interface {
+	Status() RouteStatus
 	Cleanup(context.Context) error
 }
 
@@ -54,6 +59,7 @@ type Manager struct {
 	mu            sync.Mutex
 	started       bool
 	adapterHandle AdapterHandle
+	routeHandle   RouteHandle
 	snapshot      Snapshot
 }
 
@@ -130,20 +136,30 @@ func (m *Manager) Start(ctx context.Context, req StartRequest) error {
 	m.adapterHandle = handle
 	m.snapshot.Adapter = cloneAdapterStatus(handle.Status())
 	m.snapshot.Adapter.Ready = true
+	adapterStatus := cloneAdapterStatus(m.snapshot.Adapter)
 	m.snapshot.UpdatedAt = time.Now()
 	m.mu.Unlock()
 
 	m.setStage(StageAdapterReady, "Windows tunnel adapter placeholder is ready for route work")
 	m.setStage(StageRouteSetup, "Preparing Windows route changes")
 
-	routeStatus, err := m.routes.ApplyRoutes(ctx, req.Routes)
+	routeHandle, err := m.routes.ApplyRoutes(ctx, adapterStatus, req.Routes)
+	if routeHandle != nil {
+		m.mu.Lock()
+		m.routeHandle = routeHandle
+		m.snapshot.Routes = cloneRouteStatus(routeHandle.Status())
+		m.snapshot.UpdatedAt = time.Now()
+		m.mu.Unlock()
+	}
 	if err != nil {
 		return m.failAfterAdapter(ctx, "route setup failed", err)
 	}
+	if routeHandle == nil {
+		return m.failAfterAdapter(ctx, "route setup failed", errors.New("route backend returned nil handle"))
+	}
 
 	m.mu.Lock()
-	m.snapshot.Routes = cloneRouteStatus(routeStatus)
-	m.snapshot.Routes.Applied = true
+	m.snapshot.Routes = cloneRouteStatus(routeHandle.Status())
 	m.snapshot.UpdatedAt = time.Now()
 	m.mu.Unlock()
 
@@ -165,13 +181,22 @@ func (m *Manager) Stop(ctx context.Context) error {
 	m.snapshot.Message = "Stopping Windows full-tunnel scaffold"
 	m.snapshot.UpdatedAt = time.Now()
 	handle := m.adapterHandle
+	routeHandle := m.routeHandle
 	m.mu.Unlock()
 
 	m.log.Printf("full-tunnel: stop requested")
 
 	var errs []error
-	if err := m.routes.Cleanup(ctx); err != nil {
-		errs = append(errs, fmt.Errorf("route cleanup: %w", err))
+	if routeHandle != nil {
+		if err := routeHandle.Cleanup(ctx); err != nil {
+			errs = append(errs, fmt.Errorf("route cleanup: %w", err))
+		}
+	}
+	if routeHandle != nil {
+		m.mu.Lock()
+		m.snapshot.Routes = cloneRouteStatus(routeHandle.Status())
+		m.snapshot.UpdatedAt = time.Now()
+		m.mu.Unlock()
 	}
 	if handle != nil {
 		if err := handle.Close(ctx); err != nil {
@@ -182,6 +207,7 @@ func (m *Manager) Stop(ctx context.Context) error {
 	m.mu.Lock()
 	m.started = false
 	m.adapterHandle = nil
+	m.routeHandle = nil
 	m.snapshot.Stage = StageStopped
 	m.snapshot.Message = "Windows full-tunnel scaffold stopped"
 	m.snapshot.LastError = errorString(errors.Join(errs...))
@@ -199,6 +225,7 @@ func (m *Manager) failStart(message string, err error) error {
 	m.mu.Lock()
 	m.started = false
 	m.adapterHandle = nil
+	m.routeHandle = nil
 	m.snapshot.Stage = StageFailed
 	m.snapshot.Message = message
 	m.snapshot.LastError = wrapped.Error()
@@ -211,12 +238,15 @@ func (m *Manager) failStart(message string, err error) error {
 
 func (m *Manager) failAfterAdapter(ctx context.Context, message string, err error) error {
 	handle := m.currentHandle()
+	routeHandle := m.currentRouteHandle()
 
 	var errs []error
 	errs = append(errs, fmt.Errorf("%s: %w", message, err))
 
-	if cleanupErr := m.routes.Cleanup(ctx); cleanupErr != nil {
-		errs = append(errs, fmt.Errorf("route cleanup after failure: %w", cleanupErr))
+	if routeHandle != nil {
+		if cleanupErr := routeHandle.Cleanup(ctx); cleanupErr != nil {
+			errs = append(errs, fmt.Errorf("route cleanup after failure: %w", cleanupErr))
+		}
 	}
 	if handle != nil {
 		if closeErr := handle.Close(ctx); closeErr != nil {
@@ -229,9 +259,15 @@ func (m *Manager) failAfterAdapter(ctx context.Context, message string, err erro
 	m.mu.Lock()
 	m.started = false
 	m.adapterHandle = nil
+	m.routeHandle = nil
 	m.snapshot.Stage = StageFailed
 	m.snapshot.Message = message
 	m.snapshot.LastError = errorString(joined)
+	if routeHandle != nil {
+		m.snapshot.Routes = cloneRouteStatus(routeHandle.Status())
+	}
+	m.snapshot.Routes.State = RouteStateFailed
+	m.snapshot.Routes.LastError = errorString(joined)
 	m.snapshot.Adapter.Ready = false
 	m.snapshot.Routes.Applied = false
 	m.snapshot.UpdatedAt = time.Now()
@@ -245,6 +281,12 @@ func (m *Manager) currentHandle() AdapterHandle {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.adapterHandle
+}
+
+func (m *Manager) currentRouteHandle() RouteHandle {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.routeHandle
 }
 
 func (m *Manager) setStage(stage Stage, message string) {
@@ -273,6 +315,16 @@ func cloneRouteStatus(src RouteStatus) RouteStatus {
 	dst.IPv4CIDRs = append([]string(nil), src.IPv4CIDRs...)
 	dst.IPv6CIDRs = append([]string(nil), src.IPv6CIDRs...)
 	dst.DNSServers = append([]string(nil), src.DNSServers...)
+	dst.Operations = append([]RouteOperationStatus(nil), src.Operations...)
+	for idx := range dst.Operations {
+		dst.Operations[idx].Command.Args = append([]string(nil), src.Operations[idx].Command.Args...)
+		dst.Operations[idx].Command.Requires = append([]string(nil), src.Operations[idx].Command.Requires...)
+	}
+	dst.Rollback = append([]RollbackStatus(nil), src.Rollback...)
+	for idx := range dst.Rollback {
+		dst.Rollback[idx].Command.Args = append([]string(nil), src.Rollback[idx].Command.Args...)
+		dst.Rollback[idx].Command.Requires = append([]string(nil), src.Rollback[idx].Command.Requires...)
+	}
 	return dst
 }
 

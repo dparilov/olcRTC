@@ -35,13 +35,22 @@ func TestManagerStartStopSuccess(t *testing.T) {
 		},
 	}
 	routes := &fakeRouteBackend{
-		status: RouteStatus{
+		handle: &fakeRouteHandle{status: RouteStatus{
+			State:           RouteStateApplied,
 			Mode:            RouteModeFullTunnel,
 			IPv4CIDRs:       []string{"0.0.0.0/0"},
 			DNSServers:      []string{"1.1.1.1"},
+			Applied:         true,
 			AllowRollback:   true,
 			RequiresDefault: true,
-		},
+			Operations: []RouteOperationStatus{
+				{Kind: RouteOperationAddRoute, Family: "ipv4", Target: "0.0.0.0/0", State: RouteOperationApplied},
+			},
+			Rollback: []RollbackStatus{
+				{Kind: RouteOperationAddRoute, Family: "ipv4", Target: "0.0.0.0/0", State: RouteOperationCleanupPending},
+			},
+			CleanupRequired: true,
+		}},
 	}
 	manager := newManager(nil, adapter, routes)
 
@@ -73,11 +82,14 @@ func TestManagerStartStopSuccess(t *testing.T) {
 	if !snapshot.Routes.Applied {
 		t.Fatal("routes should be marked applied")
 	}
+	if snapshot.Routes.State != RouteStateApplied {
+		t.Fatalf("route state = %q, want %q", snapshot.Routes.State, RouteStateApplied)
+	}
 
 	if err := manager.Stop(context.Background()); err != nil {
 		t.Fatalf("Stop returned error: %v", err)
 	}
-	if !routes.cleaned {
+	if !routes.handle.cleaned {
 		t.Fatal("route cleanup was not called")
 	}
 	if !adapter.handle.closed {
@@ -91,7 +103,46 @@ func TestManagerStartRouteFailureRollsBackAdapter(t *testing.T) {
 			status: AdapterStatus{Name: "olcRTC Full Tunnel", Provider: "wintun"},
 		},
 	}
-	routes := &fakeRouteBackend{applyErr: errors.New("route apply failed")}
+	routes := &fakeRouteBackend{
+		handle: &fakeRouteHandle{
+			status: RouteStatus{
+				State:         RouteStatePlanned,
+				Mode:          RouteModeFullTunnel,
+				IPv4CIDRs:     []string{"0.0.0.0/0"},
+				DNSServers:    []string{"1.1.1.1"},
+				AllowRollback: true,
+				Operations: []RouteOperationStatus{
+					{
+						Kind:      RouteOperationAddRoute,
+						Family:    "ipv4",
+						Target:    "0.0.0.0/0",
+						State:     RouteOperationPlanned,
+						Command:   CommandSpec{Executable: "netsh.exe", Args: []string{"interface", "ipv4", "add", "route"}},
+						Interface: "olcRTC Full Tunnel",
+					},
+					{
+						Kind:      RouteOperationSetDNS,
+						Target:    "1.1.1.1",
+						State:     RouteOperationPlanned,
+						Command:   CommandSpec{Executable: "powershell.exe", Args: []string{"Set-DnsClientServerAddress"}},
+						Interface: "olcRTC Full Tunnel",
+					},
+				},
+				Rollback: []RollbackStatus{
+					{
+						Kind:      RouteOperationAddRoute,
+						Family:    "ipv4",
+						Target:    "0.0.0.0/0",
+						State:     RouteOperationPlanned,
+						Command:   CommandSpec{Executable: "netsh.exe", Args: []string{"interface", "ipv4", "delete", "route"}},
+						Interface: "olcRTC Full Tunnel",
+					},
+				},
+				CleanupRequired: true,
+			},
+		},
+		applyErr: errors.New("route apply failed"),
+	}
 	manager := newManager(nil, adapter, routes)
 
 	err := manager.Start(context.Background(), StartRequest{
@@ -101,7 +152,7 @@ func TestManagerStartRouteFailureRollsBackAdapter(t *testing.T) {
 	if err == nil {
 		t.Fatal("Start error = nil, want failure")
 	}
-	if !routes.cleaned {
+	if !routes.handle.cleaned {
 		t.Fatal("route cleanup was not called")
 	}
 	if !adapter.handle.closed {
@@ -114,6 +165,18 @@ func TestManagerStartRouteFailureRollsBackAdapter(t *testing.T) {
 	}
 	if snapshot.LastError == "" {
 		t.Fatal("LastError should be populated")
+	}
+	if len(snapshot.Routes.Operations) != 2 {
+		t.Fatalf("route operations = %d, want 2", len(snapshot.Routes.Operations))
+	}
+	if snapshot.Routes.Operations[0].Command.Executable != "netsh.exe" {
+		t.Fatalf("first route command executable = %q, want netsh.exe", snapshot.Routes.Operations[0].Command.Executable)
+	}
+	if snapshot.Routes.State != RouteStateFailed {
+		t.Fatalf("route state = %q, want %q", snapshot.Routes.State, RouteStateFailed)
+	}
+	if snapshot.Routes.LastError == "" {
+		t.Fatal("route last error should be populated")
 	}
 }
 
@@ -145,20 +208,31 @@ func (h *fakeAdapterHandle) Close(context.Context) error {
 }
 
 type fakeRouteBackend struct {
-	status   RouteStatus
+	handle   *fakeRouteHandle
 	applyErr error
-	cleanErr error
-	cleaned  bool
 }
 
-func (b *fakeRouteBackend) ApplyRoutes(context.Context, RoutePlan) (RouteStatus, error) {
+func (b *fakeRouteBackend) ApplyRoutes(context.Context, AdapterStatus, RoutePlan) (RouteHandle, error) {
 	if b.applyErr != nil {
-		return RouteStatus{}, b.applyErr
+		return b.handle, b.applyErr
 	}
-	return b.status, nil
+	return b.handle, nil
 }
 
-func (b *fakeRouteBackend) Cleanup(context.Context) error {
-	b.cleaned = true
-	return b.cleanErr
+type fakeRouteHandle struct {
+	status  RouteStatus
+	cleaned bool
+	err     error
+}
+
+func (h *fakeRouteHandle) Status() RouteStatus {
+	return h.status
+}
+
+func (h *fakeRouteHandle) Cleanup(context.Context) error {
+	h.cleaned = true
+	h.status.State = RouteStateCleaned
+	h.status.Applied = false
+	h.status.CleanupRequired = false
+	return h.err
 }
