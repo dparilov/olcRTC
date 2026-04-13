@@ -218,6 +218,12 @@ vite.config.ts.timestamp-*
 *.exe~
 *.dll
 *.so
+
+# Android / Gradle local build artifacts
+android/.gradle/
+android/.gradle-*/
+android/app/build/
+android/gradle-*.zip
 *.dylib
 
 # Test binary, built with `go test -c`
