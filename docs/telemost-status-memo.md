@@ -29,6 +29,7 @@ A full Linux-only controlled validation pass was completed against clean Telemos
   - parallel request checks
   - throughput/download probes
 - A full human-readable controlled report was produced and exported
+- Next report iteration should include the explicit IP values returned by each IP checker so foreign vs Russian contour egress can be compared directly
 - Controlled reconnect under induced instability was exercised successfully
 - Reconnect now exits and returns as a single participant in Telemost UI (verified externally)
 
@@ -60,7 +61,19 @@ Android/Client -> VPS -> Internet
 
 It is now also confirmed that Linux controlled testing can be used as a stable baseline before moving to Android emulator and real-device phases.
 
+## Android emulator phase status
+- Android emulator bring-up was completed on Linux (`telemost35`, Android 15, x86_64)
+- Debug APK was installed successfully and `MainActivity` launched without fatal crash
+- First emulator app-flow probe exposed a brittle clipboard intake path rather than a transport failure
+- The Android app intake path has now been hardened locally to accept:
+  - clipboard text candidates more defensively
+  - launch intent payloads
+  - deep links for `telemost.yandex.ru/.com/j/...`
+  - share-intent text payloads
+- This hardened intake path now needs a fresh clean-room controlled emulator validation run
+
 ## Current engineering focus
 1. Preserve and use the Linux controlled testbed as the source-of-truth baseline
-2. Move next to Android emulator validation using the same clean-room protocol
-3. Then return to real Android device validation and Android-specific orchestration polish
+2. Add explicit IP values to Linux diagnostics/report output for split-egress visibility
+3. Validate the hardened Android intake path in a clean-room emulator run
+4. Then return to real Android device validation and Android-specific orchestration polish

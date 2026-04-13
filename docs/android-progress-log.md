@@ -89,11 +89,40 @@ This significantly reduces ambiguity in the next Android phase:
 - if emulator/device behavior differs, that difference is now much more likely to be Android-specific rather than a raw transport-layer mystery
 - diagnostics design can be ported from the Linux baseline instead of invented from scratch inside Android
 
+## Emulator progress update (2026-04-13 later phase)
+### What was additionally completed
+- Android emulator stack installed and booted successfully on Linux
+- AVD created: `telemost35`
+- `adb` confirmed healthy running emulator (`emulator-5554 device`)
+- Debug APK installed successfully
+- `MainActivity` launched without fatal crash
+
+### What the first emulator app-flow test revealed
+The first controlled app-flow attempt did not fail in transport startup first. Instead, it exposed a fragile input path in the Android UI layer:
+- meeting link intake relied too narrowly on a single clipboard read
+- emulator clipboard behavior was not robust enough for that assumption
+
+### Local app fix prepared after that finding
+The Android app intake path was hardened locally to support:
+- multiple clipboard candidate values
+- launch-intent payload parsing
+- deep-link handling for `telemost.yandex.ru/.com/j/...`
+- text share intent fallback
+- intake logging for faster emulator diagnosis
+
+### Current practical blocker
+The next missing step is no longer diagnosis of the cause. It is execution discipline:
+- run one fresh clean-room emulator validation after the intake fix
+- confirm room link is accepted
+- confirm tunnel reaches ready state from the app path
+- then fold the result into docs and a fixing commit
+
 ## Recommended next step
-1. Use the Linux controlled testbed as the baseline reference
-2. Move to Android emulator validation with the same clean-room protocol
-3. Only after emulator behavior is characterized, return to real-device iteration
-4. In parallel when needed, continue improving Android/mobile compatibility in the bind path, especially around:
+1. Keep Linux controlled testbed as the baseline reference
+2. Run a fresh controlled Android emulator validation with the hardened intake path
+3. Update human-readable diagnostics/reporting to show explicit checker IP values
+4. Then return to real-device iteration
+5. Continue bind-path cleanup in parallel when needed, especially around:
    - `github.com/wlynxg/anet`
    - Android/mobile-specific dependency graph adaptation
    - gomobile compatibility boundaries

@@ -3,6 +3,7 @@ package com.telemost.client
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -18,8 +19,9 @@ import mobile.Mobile
 class TelemostTunnelController(private val appContext: Context) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var diagnosticsJob: Job? = null
+    private var lastHandledIntentPayload: String? = null
     private val _status = MutableStateFlow("Idle")
-    private val _meeting = MutableStateFlow("No clipboard link parsed yet")
+    private val _meeting = MutableStateFlow("No meeting link parsed yet")
     private val _diagnostics = MutableStateFlow("Diagnostics have not run yet")
     private val _logs = MutableStateFlow("Telemost Client v0.1\n")
 
@@ -36,36 +38,30 @@ class TelemostTunnelController(private val appContext: Context) {
         appendLog("Controller initialized")
     }
 
+    fun handleIntent(intent: Intent?) {
+        val payload = extractIntentPayload(intent) ?: return
+        if (payload == lastHandledIntentPayload) return
+        lastHandledIntentPayload = payload
+
+        val roomId = parseMeeting(payload)
+        if (roomId != null) {
+            _meeting.value = roomId
+            appendLog("Meeting parsed from launch intent: $roomId")
+        } else {
+            appendLog("Launch intent did not contain a valid Telemost room")
+        }
+    }
+
     fun launchFromClipboard() {
-        val clipboard = appContext.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        val text = clipboard.primaryClip?.getItemAt(0)?.coerceToText(appContext)?.toString()?.trim().orEmpty()
-        val roomId = parseMeeting(text)
+        val roomId = resolveMeetingFromClipboardOrIntent()
         if (roomId == null) {
-            _status.value = "Clipboard link not found"
-            _meeting.value = "Clipboard does not contain a Telemost invite"
-            appendLog("No valid Telemost link/id in clipboard")
+            _status.value = "Meeting link not found"
+            _meeting.value = "Clipboard/intent does not contain a Telemost invite"
+            appendLog("No valid Telemost link/id found in clipboard or launch intent")
             return
         }
 
-        _meeting.value = roomId
-        _status.value = "Starting tunnel"
-        appendLog("Launch requested for room=$roomId")
-
-        scope.launch {
-            try {
-                Mobile.start(roomId, DEFAULT_KEY_HEX, DEFAULT_SOCKS_PORT.toLong(), false, "", "")
-                _status.value = "Connecting to Telemost"
-                appendLog("Mobile.start completed, waiting ready")
-                Mobile.waitReady(READY_TIMEOUT_MS)
-                _status.value = "SOCKS ready"
-                _diagnostics.value = "Diagnostics available (manual start recommended)"
-                appendLog("Tunnel ready on local SOCKS port $DEFAULT_SOCKS_PORT")
-                scheduleReconnectWatchdog()
-            } catch (t: Throwable) {
-                _status.value = "Error"
-                appendLog("Launch failed: ${t.message}")
-            }
-        }
+        launchTunnel(roomId)
     }
 
     fun stopTunnel() {
@@ -119,6 +115,72 @@ class TelemostTunnelController(private val appContext: Context) {
         val clipboard = appContext.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         clipboard.setPrimaryClip(ClipData.newPlainText("telemost-log", _logs.value))
         appendLog("Log copied to clipboard")
+    }
+
+    private fun launchTunnel(roomId: String) {
+        _meeting.value = roomId
+        _status.value = "Starting tunnel"
+        appendLog("Launch requested for room=$roomId")
+
+        scope.launch {
+            try {
+                Mobile.start(roomId, DEFAULT_KEY_HEX, DEFAULT_SOCKS_PORT.toLong(), false, "", "")
+                _status.value = "Connecting to Telemost"
+                appendLog("Mobile.start completed, waiting ready")
+                Mobile.waitReady(READY_TIMEOUT_MS)
+                _status.value = "SOCKS ready"
+                _diagnostics.value = "Diagnostics available (manual start recommended)"
+                appendLog("Tunnel ready on local SOCKS port $DEFAULT_SOCKS_PORT")
+                scheduleReconnectWatchdog()
+            } catch (t: Throwable) {
+                _status.value = "Error"
+                appendLog("Launch failed: ${t.message}")
+            }
+        }
+    }
+
+    private fun resolveMeetingFromClipboardOrIntent(): String? {
+        val clipboard = appContext.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        val clip = clipboard.primaryClip
+        val itemCount = clip?.itemCount ?: 0
+        appendLog("Clipboard probe: items=$itemCount")
+
+        val candidates = mutableListOf<String>()
+        for (index in 0 until itemCount) {
+            val item = clip?.getItemAt(index) ?: continue
+            item.text?.toString()?.trim()?.takeIf { it.isNotBlank() }?.let { candidates += it }
+            item.coerceToText(appContext)?.toString()?.trim()?.takeIf { it.isNotBlank() }?.let { candidates += it }
+            item.htmlText?.trim()?.takeIf { it.isNotBlank() }?.let { candidates += it }
+            item.uri?.toString()?.trim()?.takeIf { it.isNotBlank() }?.let { candidates += it }
+            item.intent?.dataString?.trim()?.takeIf { it.isNotBlank() }?.let { candidates += it }
+        }
+
+        val uniqueCandidates = candidates.distinct()
+        appendLog("Clipboard candidates: ${uniqueCandidates.size}")
+        uniqueCandidates.forEachIndexed { index, value ->
+            appendLog("Clipboard[$index]: ${value.take(200)}")
+        }
+
+        uniqueCandidates.firstNotNullOfOrNull { parseMeeting(it) }?.let { return it }
+
+        val fallback = lastHandledIntentPayload?.let { parseMeeting(it) }
+        if (fallback != null) {
+            appendLog("Using meeting parsed from launch intent fallback")
+        }
+        return fallback
+    }
+
+    private fun extractIntentPayload(intent: Intent?): String? {
+        val parts = listOfNotNull(
+            intent?.dataString,
+            intent?.getStringExtra(Intent.EXTRA_TEXT),
+            intent?.getStringExtra(Intent.EXTRA_PROCESS_TEXT),
+            intent?.clipData?.getItemAt(0)?.coerceToText(appContext)?.toString()
+        )
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+
+        return parts.firstOrNull()
     }
 
     private fun appendLog(line: String) {

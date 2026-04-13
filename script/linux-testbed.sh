@@ -119,6 +119,34 @@ probe_reason() {
   fi
   printf "%s" "$reason"
 }
+extract_ip_from_body() {
+  local body="$1"
+  python3 - "$body" <<'PY'
+import json, re, sys
+from pathlib import Path
+p = Path(sys.argv[1])
+if not p.exists():
+    print("")
+    raise SystemExit
+text = p.read_text(errors="ignore").strip()
+if not text:
+    print("")
+    raise SystemExit
+for parser in (
+    lambda s: json.loads(s).get("ip") if s.startswith("{") else None,
+    lambda s: re.search(r'\b(?:\d{1,3}\.){3}\d{1,3}\b', s).group(0) if re.search(r'\b(?:\d{1,3}\.){3}\d{1,3}\b', s) else None,
+):
+    try:
+        v = parser(text)
+    except Exception:
+        v = None
+    if v:
+        print(v)
+        raise SystemExit
+print("")
+PY
+}
+
 run_probe() {
   local bucket="$1"
   local name="$2"
@@ -127,8 +155,19 @@ run_probe() {
   local meta="$RAW_DIR/${name}.meta"
   local err="$RAW_DIR/${name}.err"
   if curl --silent --show-error --fail --proxy "$PROXY" --connect-timeout "$PROBE_TIMEOUT" --max-time "$PROBE_TIMEOUT" --output "$body" --write-out "http_code=%{http_code} time_total=%{time_total}\n" "$url" > "$meta" 2> "$err"; then
-    printf "%s -> %s" "$url" "$(cat "$meta")" | tee -a "$SUMMARY"
-    jq --arg bucket "$bucket" --arg name "$name" --arg url "$url" --arg meta "$(tr -d '\n' < "$meta")" '.[$bucket][$name]={url:$url,result:$meta,status:"ok"}' "$REPORT_JSON" > "$REPORT_JSON.tmp" && mv "$REPORT_JSON.tmp" "$REPORT_JSON"
+    local meta_line ip_line
+    meta_line="$(tr -d '\n' < "$meta")"
+    ip_line=""
+    if [[ "$bucket" == "ip_checks" ]]; then
+      ip_line="$(extract_ip_from_body "$body")"
+    fi
+    if [[ -n "$ip_line" ]]; then
+      printf "%s -> %s ip=%s\n" "$url" "$meta_line" "$ip_line" | tee -a "$SUMMARY"
+      jq --arg bucket "$bucket" --arg name "$name" --arg url "$url" --arg meta "$meta_line" --arg ip "$ip_line" '.[$bucket][$name]={url:$url,result:$meta,status:"ok",ip:$ip}' "$REPORT_JSON" > "$REPORT_JSON.tmp" && mv "$REPORT_JSON.tmp" "$REPORT_JSON"
+    else
+      printf "%s -> %s\n" "$url" "$meta_line" | tee -a "$SUMMARY"
+      jq --arg bucket "$bucket" --arg name "$name" --arg url "$url" --arg meta "$meta_line" '.[$bucket][$name]={url:$url,result:$meta,status:"ok"}' "$REPORT_JSON" > "$REPORT_JSON.tmp" && mv "$REPORT_JSON.tmp" "$REPORT_JSON"
+    fi
   else
     local reason
     reason=$(probe_reason "$err")
@@ -232,6 +271,21 @@ CLIENT_OLCRTC_CHANNELS=$(grep -c "Received datachannel: olcrtc" "$CLIENT_LOG" ||
 echo "\n== DIAG SUMMARY ==" | tee -a "$SUMMARY"
 echo "client socks starts: $CLIENT_SOCKS_STARTS" | tee -a "$SUMMARY"
 echo "olcrtc channel count: $CLIENT_OLCRTC_CHANNELS" | tee -a "$SUMMARY"
+FOREIGN_IPS=$(jq -r '.ip_checks | to_entries[]? | select(.key=="ip_ifconfig_me" or .key=="ip_api_ipify_org") | select(.value.ip != null) | .value.ip' "$REPORT_JSON" | sort -u | paste -sd, -)
+RU_IPS=$(jq -r '.ip_checks | to_entries[]? | select(.key=="ip_yandex_internet" or .key=="ip_ya_ru") | select(.value.ip != null) | .value.ip' "$REPORT_JSON" | sort -u | paste -sd, -)
+if [[ -n "$FOREIGN_IPS" ]]; then
+  echo "foreign contour ip(s): $FOREIGN_IPS" | tee -a "$SUMMARY"
+fi
+if [[ -n "$RU_IPS" ]]; then
+  echo "russian contour ip(s): $RU_IPS" | tee -a "$SUMMARY"
+fi
+if [[ -n "$FOREIGN_IPS" && -n "$RU_IPS" ]]; then
+  if [[ "$FOREIGN_IPS" == "$RU_IPS" ]]; then
+    echo "split egress verdict: same egress detected" | tee -a "$SUMMARY"
+  else
+    echo "split egress verdict: different egress detected" | tee -a "$SUMMARY"
+  fi
+fi
 if [[ "$CLIENT_OLCRTC_CHANNELS" == "0" ]]; then
   echo "diagnosis: session reached SOCKS ready but never exposed olcrtc datachannel" | tee -a "$SUMMARY"
 fi

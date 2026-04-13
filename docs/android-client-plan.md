@@ -4,7 +4,7 @@
 Build a basic Android APK around the existing `mobile/mobile.go` olcRTC binding layer.
 
 ## MVP scope
-- Launch tunnel from Telemost meeting link in clipboard
+- Launch tunnel from Telemost meeting link in clipboard, deep link, or shared text payload
 - Parse room id from full link or raw id
 - Start/stop tunnel
 - Show status states
@@ -38,7 +38,7 @@ Build a basic Android APK around the existing `mobile/mobile.go` olcRTC binding 
 - Tunnel state label
 - Parsed meeting / room id
 - Buttons:
-  - Launch tunnel (take meeting link from clipboard)
+  - Launch tunnel (resolve meeting link from clipboard or latest intent payload)
   - Stop tunnel
   - Run diagnostics again
   - Copy log
@@ -115,13 +115,25 @@ Each validation step should use a **clean Telemost room** when possible to avoid
   - Run diagnostics again
   - Copy log
   - status / diagnostics / log blocks
+- Emulator environment validated:
+  - Android Emulator installed
+  - AVD `telemost35` created
+  - emulator boot confirmed via `adb`
+  - debug APK install confirmed
+  - `MainActivity` launch confirmed
+- Meeting-link intake path hardened locally to support:
+  - clipboard candidates
+  - launch intents
+  - deep links
+  - share-intent text
 
 ### Current blocker
-`gomobile bind` now reaches real backend compilation, but fails on Android binding because of a dependency-level linker issue:
+The immediate blocker for the emulator phase is no longer environment bring-up. It is finishing one clean controlled validation pass after the local meeting-link intake hardening.
 
+A separate deeper technical issue still exists in the bind/toolchain history:
 - `link: github.com/wlynxg/anet: invalid reference to net.zoneCache`
 
-This means the remaining blocker is no longer environment setup, but code adaptation for Android/mobile build compatibility.
+But that is no longer the only relevant story for the current app/emulator workflow, because the present APK/emulator path is already far enough along to validate UI-driven startup behavior.
 
 ### Important context after Linux validation
 On 2026-04-13 the Linux transport baseline was validated much more deeply, including:
