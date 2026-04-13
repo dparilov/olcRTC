@@ -376,12 +376,17 @@ func (c *Client) handleSOCKS5(conn net.Conn, username, password string) {
 		return
 	}
 
-	if !c.waitConnectResponse(conn, sid) {
+	initialData, ok := c.waitConnectResponse(conn, sid)
+	if !ok {
 		return
 	}
 
-	c.mux.ReadStream(sid)
 	writeResponse(conn, replySuccess())
+	if len(initialData) > 1 {
+		if !writeStreamData(conn, initialData[1:]) {
+			return
+		}
+	}
 	c.proxyStream(conn, sid)
 }
 
@@ -500,7 +505,7 @@ func (c *Client) sendConnectRequest(sid uint16, addr string, port uint16) bool {
 	return true
 }
 
-func (c *Client) waitConnectResponse(conn net.Conn, sid uint16) bool {
+func (c *Client) waitConnectResponse(conn net.Conn, sid uint16) ([]byte, bool) {
 	dataReady := c.mux.WaitForData(sid)
 	timeout := time.NewTimer(10 * time.Second)
 	defer timeout.Stop()
@@ -510,14 +515,13 @@ func (c *Client) waitConnectResponse(conn net.Conn, sid uint16) bool {
 		stream := c.mux.GetStream(sid)
 		if stream == nil || len(stream.RecvBuf()) == 0 {
 			writeResponse(conn, replyHostUnreachable())
-			return false
+			return nil, false
 		}
+		return c.mux.ReadStream(sid), true
 	case <-timeout.C:
 		writeResponse(conn, replyHostUnreachable())
-		return false
+		return nil, false
 	}
-
-	return true
 }
 
 //nolint:cyclop // The stream pump handles two coordinated goroutines and shutdown races in one place.
