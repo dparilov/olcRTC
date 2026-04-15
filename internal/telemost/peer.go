@@ -579,6 +579,16 @@ func (p *Peer) handleSignaling() {
 			return
 		}
 
+		// Debug: log all WS message keys
+		keys := make([]string, 0, len(msg))
+		for k := range msg {
+			if k != "uid" && k != "ack" {
+				keys = append(keys, k)
+			}
+		}
+		if len(keys) > 0 {
+			log.Printf("[WS-MSG] keys=%v", keys)
+		}
 		p.wsMu.Lock()
 		if p.ws != nil {
 			p.ws.SetReadDeadline(time.Now().Add(60 * time.Second))
