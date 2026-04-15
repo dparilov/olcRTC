@@ -203,18 +203,6 @@ func (p *Peer) Connect(ctx context.Context) error {
 		return err
 	}
 
-	// Tell the SFU we want to receive video — without this transceiver the
-	// subscriber SDP has no m=video line and the SFU won't forward VP8 tracks.
-	if _, err = p.pcSub.AddTransceiverFromKind(webrtc.RTPCodecTypeVideo, webrtc.RTPTransceiverInit{
-		Direction: webrtc.RTPTransceiverDirectionRecvonly,
-	}); err != nil {
-		return fmt.Errorf("add recvonly video transceiver to subscriber: %w", err)
-	}
-	if _, err = p.pcSub.AddTransceiverFromKind(webrtc.RTPCodecTypeAudio, webrtc.RTPTransceiverInit{
-		Direction: webrtc.RTPTransceiverDirectionRecvonly,
-	}); err != nil {
-		return fmt.Errorf("add recvonly audio transceiver to subscriber: %w", err)
-	}
 
 	p.pcSub.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
 		log.Printf("Subscriber PeerConnection state: %s", state.String())
@@ -243,10 +231,8 @@ func (p *Peer) Connect(ctx context.Context) error {
 	if audioErr != nil {
 		return fmt.Errorf("create audio track: %w", audioErr)
 	}
-	if _, err = p.pcPub.AddTransceiverFromTrack(audioTrack, webrtc.RTPTransceiverInit{
-		Direction: webrtc.RTPTransceiverDirectionSendonly,
-	}); err != nil {
-		return fmt.Errorf("add audio transceiver: %w", err)
+	if _, err = p.pcPub.AddTrack(audioTrack); err != nil {
+		return fmt.Errorf("add audio track: %w", err)
 	}
 
 	// Add VP8 video track (sendonly) — keepalive frames prevent SFU from kicking us.
@@ -259,10 +245,8 @@ func (p *Peer) Connect(ctx context.Context) error {
 	}
 	p.sampleTrack = sampleTrack
 	p.vp8Sender = NewVP8Sender(sampleTrack, 25)
-	if _, err = p.pcPub.AddTransceiverFromTrack(sampleTrack, webrtc.RTPTransceiverInit{
-		Direction: webrtc.RTPTransceiverDirectionSendonly,
-	}); err != nil {
-		return fmt.Errorf("add video transceiver: %w", err)
+	if _, err = p.pcPub.AddTrack(sampleTrack); err != nil {
+		return fmt.Errorf("add video track: %w", err)
 	}
 
 	// DataChannel labelled "sharing" — matches Telemost screen-sharing traffic;
@@ -384,6 +368,24 @@ func (p *Peer) Connect(ctx context.Context) error {
 			switchFn()
 		} else {
 			dc.OnOpen(func() { switchFn() })
+		}
+	})
+
+	// Receive remote tracks on publisher PC too — Telemost may forward VP8 here.
+	p.pcPub.OnTrack(func(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
+		log.Printf("[VP8RX] PUB got remote track: id=%s codec=%s", track.ID(), track.Codec().MimeType)
+		if strings.EqualFold(track.Codec().MimeType, webrtc.MimeTypeVP8) {
+			go ReadVP8Track(track, p.onData, p.closeCh)
+		} else {
+			// Drain non-VP8 tracks to prevent buffer buildup
+			go func() {
+				buf := make([]byte, 1500)
+				for {
+					if _, _, err := track.Read(buf); err != nil {
+						return
+					}
+				}
+			}()
 		}
 	})
 

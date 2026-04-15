@@ -6,10 +6,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pion/rtp"
 	"github.com/pion/rtp/codecs"
 	"github.com/pion/webrtc/v4"
 	"github.com/pion/webrtc/v4/pkg/media"
-	"github.com/pion/webrtc/v4/pkg/media/samplebuilder"
 )
 
 const DataFrameMarker = 0xFF
@@ -117,11 +117,17 @@ func (s *VP8Sender) Run(sessionClose, peerClose <-chan struct{}) {
 
 // ReadVP8Track reads RTP packets from a remote VP8 track, reassembles
 // frames, and calls onData for each extracted data payload.
+// ReadVP8Track reads RTP packets from a remote VP8 track, manually
+// depacketizes VP8 frames (matching reference impl), and calls onData
+// for each extracted data payload.
 func ReadVP8Track(track *webrtc.TrackRemote, onData func([]byte), closeCh <-chan struct{}) {
 	log.Printf("[VP8RX] Starting reader for track %s (codec=%s)", track.ID(), track.Codec().MimeType)
 
-	builder := samplebuilder.New(20, &codecs.VP8Packet{}, track.Codec().ClockRate)
+	var vp8Pkt codecs.VP8Packet
+	var frameBuf []byte
 	var frameCount uint64
+	var dataCount uint64
+	buf := make([]byte, 65535)
 
 	for {
 		select {
@@ -131,29 +137,45 @@ func ReadVP8Track(track *webrtc.TrackRemote, onData func([]byte), closeCh <-chan
 		default:
 		}
 
-		pkt, _, err := track.ReadRTP()
+		n, _, err := track.Read(buf)
 		if err != nil {
-			log.Printf("[VP8RX] ReadRTP error: %v", err)
+			log.Printf("[VP8RX] Read error: %v", err)
 			return
 		}
 
-		builder.Push(pkt)
-		for {
-			sample := builder.Pop()
-			if sample == nil {
-				break
-			}
+		pkt := &rtp.Packet{}
+		if pkt.Unmarshal(buf[:n]) != nil {
+			continue
+		}
+
+		vp8Payload, err := vp8Pkt.Unmarshal(pkt.Payload)
+		if err != nil {
+			continue
+		}
+
+		// S bit = start of VP8 partition → reset frame buffer
+		if vp8Pkt.S == 1 {
+			frameBuf = frameBuf[:0]
+		}
+		frameBuf = append(frameBuf, vp8Payload...)
+
+		// Marker bit = end of frame → process complete frame
+		if pkt.Marker {
 			frameCount++
-			data := ExtractDataFromPayload(sample.Data)
+			if frameCount <= 3 || frameCount%25 == 0 {
+				if len(frameBuf) > 0 {
+					log.Printf("[VP8RX] frame #%d %d bytes first=0x%02x", frameCount, len(frameBuf), frameBuf[0])
+				}
+			}
+			data := ExtractDataFromPayload(frameBuf)
 			if data != nil {
-				if frameCount <= 10 || frameCount%200 == 0 {
-					log.Printf("[VP8RX] DATA frame=%d dataLen=%d", frameCount, len(data))
+				dataCount++
+				if dataCount <= 5 || dataCount%100 == 0 {
+					log.Printf("[VP8RX] TUNNEL DATA #%d: %d bytes", dataCount, len(data))
 				}
 				if onData != nil {
 					onData(data)
 				}
-			} else if frameCount <= 5 || frameCount%500 == 0 {
-				log.Printf("[VP8RX] keepalive frame=%d len=%d", frameCount, len(sample.Data))
 			}
 		}
 	}
