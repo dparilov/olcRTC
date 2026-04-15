@@ -1031,8 +1031,15 @@ func (p *Peer) WatchConnection(ctx context.Context) {
 
 			for {
 				if err := p.reconnect(ctx); err != nil {
+					if ctx.Err() != nil {
+						return
+					}
 					log.Printf("Reconnect failed: %v, retrying in %v...", err, backoff)
-					time.Sleep(backoff)
+					select {
+					case <-time.After(backoff):
+					case <-ctx.Done():
+						return
+					}
 					continue
 				}
 				p.reconnectMu.Lock()

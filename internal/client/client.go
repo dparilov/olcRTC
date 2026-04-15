@@ -110,8 +110,12 @@ func RunWithReady(
 	log.Println("[STARTUP] Reset signal sent, starting SOCKS listener...")
 
 	err = c.runSOCKS5(runCtx, socksHost, socksPort, socksUser, socksPass, onReady)
+	if err != nil && runCtx.Err() == nil {
+		log.Printf("[STARTUP] SOCKS listener failed: %v", err)
+	}
 
-	cancel() // ensure peer goroutines stop when SOCKS exits
+	cancel() // signal peer goroutines to stop
+	c.closePeers() // ensure peers shut down cleanly
 	log.Println("Waiting for client goroutines...")
 	c.wg.Wait()
 	log.Println("Client goroutines finished")
