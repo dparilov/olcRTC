@@ -111,6 +111,7 @@ func RunWithReady(
 
 	err = c.runSOCKS5(runCtx, socksHost, socksPort, socksUser, socksPass, onReady)
 
+	cancel() // ensure peer goroutines stop when SOCKS exits
 	log.Println("Waiting for client goroutines...")
 	c.wg.Wait()
 	log.Println("Client goroutines finished")
@@ -247,6 +248,16 @@ func (c *Client) onReconnect(peerID int, dc *webrtc.DataChannel) {
 	c.mux.Reset()
 
 	log.Println("Client multiplexer reset complete")
+
+	if dc != nil {
+		// After reconnect, resend the reset signal so the server creates the olcrtc channel.
+		// Use a goroutine to avoid blocking the reconnect callback.
+		go func() {
+			time.Sleep(150 * time.Millisecond)
+			log.Println("[STARTUP] Resending reset signal after reconnect...")
+			c.sendResetSignal()
+		}()
+	}
 }
 
 func (c *Client) sendResetSignal() {
@@ -257,13 +268,21 @@ func (c *Client) sendResetSignal() {
 		return
 	}
 
+	waitUntilPeersCanSend(c.peers)
+
+	allOK := true
 	for _, peer := range c.peers {
 		if err := peer.Send(encrypted); err != nil {
 			log.Printf("Failed to send reset signal to server: %v", err)
+			allOK = false
 		}
 	}
 
-	log.Printf("Sent reset signal to server (clientID=%d)", c.clientID)
+	if allOK {
+		log.Printf("[STARTUP] Reset signal sent to server (clientID=%d)", c.clientID)
+	} else {
+		log.Printf("[STARTUP] Reset signal partially failed (clientID=%d)", c.clientID)
+	}
 }
 
 func (c *Client) onData(data []byte) {
