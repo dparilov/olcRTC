@@ -623,6 +623,12 @@ func (p *Peer) handleSignaling() {
 			sdp, _ := offer["sdp"].(string)
 			pcSeq, _ := offer["pcSeq"].(float64)
 
+			// SDP debug: log subscriber offer m= lines from SFU
+			for _, line := range strings.Split(sdp, "\n") {
+				if strings.HasPrefix(line, "m=") || strings.HasPrefix(line, "a=sendrecv") || strings.HasPrefix(line, "a=sendonly") || strings.HasPrefix(line, "a=recvonly") || strings.HasPrefix(line, "a=inactive") {
+					log.Printf("[SDP-SUB-OFFER] %s", strings.TrimSpace(line))
+				}
+			}
 			if err := p.pcSub.SetRemoteDescription(webrtc.SessionDescription{
 				Type: webrtc.SDPTypeOffer,
 				SDP:  sdp,
@@ -660,6 +666,17 @@ func (p *Peer) handleSignaling() {
 				log.Printf("CreateOffer error: %v", err)
 				continue
 			}
+			for _, line := range strings.Split(pubOffer.SDP, "\n") {
+				if strings.HasPrefix(line, "m=") || strings.HasPrefix(line, "a=sendrecv") || strings.HasPrefix(line, "a=sendonly") || strings.HasPrefix(line, "a=recvonly") || strings.HasPrefix(line, "a=inactive") {
+					log.Printf("[SDP-PUB-OFFER] %s", strings.TrimSpace(line))
+				}
+			}
+			// SDP debug: log m= lines to verify video is included
+			for _, line := range strings.Split(pubOffer.SDP, "\n") {
+				if strings.HasPrefix(line, "m=") || strings.HasPrefix(line, "a=sendrecv") || strings.HasPrefix(line, "a=sendonly") || strings.HasPrefix(line, "a=recvonly") || strings.HasPrefix(line, "a=inactive") {
+					log.Printf("[SDP-PUB-OFFER] %s", strings.TrimSpace(line))
+				}
+			}
 
 			if err := p.pcPub.SetLocalDescription(pubOffer); err != nil {
 				log.Printf("SetLocalDescription error: %v", err)
@@ -682,6 +699,17 @@ func (p *Peer) handleSignaling() {
 		if answer, ok := msg["publisherSdpAnswer"].(map[string]interface{}); ok {
 			sdp, _ := answer["sdp"].(string)
 
+			// SDP debug: log answer m= lines
+			for _, line := range strings.Split(sdp, "\n") {
+				if strings.HasPrefix(line, "m=") || strings.HasPrefix(line, "a=sendrecv") || strings.HasPrefix(line, "a=sendonly") || strings.HasPrefix(line, "a=recvonly") || strings.HasPrefix(line, "a=inactive") {
+					log.Printf("[SDP-PUB-ANSWER] %s", strings.TrimSpace(line))
+				}
+			}
+			for _, line := range strings.Split(sdp, "\n") {
+				if strings.HasPrefix(line, "m=") || strings.HasPrefix(line, "a=sendrecv") || strings.HasPrefix(line, "a=sendonly") || strings.HasPrefix(line, "a=recvonly") || strings.HasPrefix(line, "a=inactive") {
+					log.Printf("[SDP-PUB-ANSWER] %s", strings.TrimSpace(line))
+				}
+			}
 			if err := p.pcPub.SetRemoteDescription(webrtc.SessionDescription{
 				Type: webrtc.SDPTypeAnswer,
 				SDP:  sdp,
