@@ -203,6 +203,19 @@ func (p *Peer) Connect(ctx context.Context) error {
 		return err
 	}
 
+	// Tell the SFU we want to receive video — without this transceiver the
+	// subscriber SDP has no m=video line and the SFU won't forward VP8 tracks.
+	if _, err = p.pcSub.AddTransceiverFromKind(webrtc.RTPCodecTypeVideo, webrtc.RTPTransceiverInit{
+		Direction: webrtc.RTPTransceiverDirectionRecvonly,
+	}); err != nil {
+		return fmt.Errorf("add recvonly video transceiver to subscriber: %w", err)
+	}
+	if _, err = p.pcSub.AddTransceiverFromKind(webrtc.RTPCodecTypeAudio, webrtc.RTPTransceiverInit{
+		Direction: webrtc.RTPTransceiverDirectionRecvonly,
+	}); err != nil {
+		return fmt.Errorf("add recvonly audio transceiver to subscriber: %w", err)
+	}
+
 	p.pcSub.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
 		log.Printf("Subscriber PeerConnection state: %s", state.String())
 		if !p.closed.Load() && (state == webrtc.PeerConnectionStateFailed || state == webrtc.PeerConnectionStateDisconnected) {
