@@ -695,18 +695,44 @@ func (p *Peer) handleSignaling() {
 				continue
 			}
 
+			// Parse mids for track metadata (required by SFU)
+			audioMid, videoMid := parseMids(pubOffer.SDP)
+			var tracks []map[string]interface{}
+			if audioMid != "" {
+				tracks = append(tracks, map[string]interface{}{"mid": audioMid, "transceiverMid": audioMid, "kind": "AUDIO", "priority": 0, "label": "", "codecs": map[string]interface{}{}, "groupId": 1, "description": ""})
+			}
+			if videoMid != "" {
+				tracks = append(tracks, map[string]interface{}{"mid": videoMid, "transceiverMid": videoMid, "kind": "VIDEO", "priority": 0, "label": "", "codecs": map[string]interface{}{}, "groupId": 2, "description": ""})
+			}
+			log.Printf("[PUB-OFFER] audioMid=%s videoMid=%s tracks=%d", audioMid, videoMid, len(tracks))
+
 			p.wsMu.Lock()
 			p.ws.WriteJSON(map[string]interface{}{
 				"uid": uuid.New().String(),
 				"publisherSdpOffer": map[string]interface{}{
 					"pcSeq": 1,
 					"sdp":   pubOffer.SDP,
+					"tracks": tracks,
 				},
 			})
 			p.wsMu.Unlock()
 
 			pubSent = true
 			} // end !pubSent
+
+			// Request video slots - SFU slot-based model for video forwarding
+			p.wsMu.Lock()
+			p.ws.WriteJSON(map[string]interface{}{
+				"uid": uuid.New().String(),
+				"setSlots": map[string]interface{}{
+					"slots": []map[string]interface{}{{"width": 320, "height": 240}},
+					"audioSlotsCount": 1,
+					"key": 1,
+					"nLastConfig": map[string]interface{}{"nCount": 1, "showInSubgrid": false},
+				},
+			})
+			p.wsMu.Unlock()
+			log.Println("[WS] setSlots sent")
 		}
 
 		if answer, ok := msg["publisherSdpAnswer"].(map[string]interface{}); ok {
