@@ -18,6 +18,7 @@ import (
 	"github.com/openlibrecommunity/olcrtc/internal/logger"
 	"github.com/openlibrecommunity/olcrtc/internal/protect"
 	"github.com/pion/webrtc/v4"
+	"github.com/pion/webrtc/v4/pkg/media"
 )
 
 const (
@@ -26,6 +27,18 @@ const (
 	defaultSendDelayMax         = 12 * time.Millisecond
 	defaultTelemetryInterval    = 20 * time.Second
 )
+
+// VP8 keepalive frames — required to keep Telemost SFU alive.
+// Without a video track the SFU disconnects the peer within ~1 s.
+// Source: github.com/kulikov0/whitelist-bypass relay/tunnel/vp8tunnel.go
+var vp8Keyframe = []byte{
+	16, 2, 0, 157, 1, 42, 2, 0, 2, 0, 2, 7, 8, 133, 133, 136,
+	153, 132, 136, 11, 2, 0, 12, 13, 96, 0, 254, 252, 173, 16,
+}
+
+var vp8Interframe = []byte{
+	177, 1, 0, 8, 17, 24, 0, 24, 0, 24, 88, 47, 244, 0, 8, 0, 0,
+}
 
 type TrafficShape struct {
 	MaxMessageSize int
@@ -39,9 +52,12 @@ type Peer struct {
 	conn            *ConnectionInfo
 	ws              *websocket.Conn
 	wsMu            sync.Mutex
+	dcMu             sync.Mutex
 	pcSub           *webrtc.PeerConnection
 	pcPub           *webrtc.PeerConnection
 	dc              *webrtc.DataChannel
+	sampleTrack     *webrtc.TrackLocalStaticSample
+	vp8FrameCount   uint64
 	onData          func([]byte)
 	onReconnect     func(*webrtc.DataChannel)
 	reconnectCh     chan struct{}
@@ -207,7 +223,39 @@ func (p *Peer) Connect(ctx context.Context) error {
 		}
 	})
 
-	p.dc, err = p.pcPub.CreateDataChannel("olcrtc", nil)
+	// Add audio track (Opus sendonly) — Telemost SFU requires media tracks on the publisher.
+	audioTrack, audioErr := webrtc.NewTrackLocalStaticRTP(
+		webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeOpus},
+		"audio", "tunnel-audio",
+	)
+	if audioErr != nil {
+		return fmt.Errorf("create audio track: %w", audioErr)
+	}
+	if _, err = p.pcPub.AddTransceiverFromTrack(audioTrack, webrtc.RTPTransceiverInit{
+		Direction: webrtc.RTPTransceiverDirectionSendonly,
+	}); err != nil {
+		return fmt.Errorf("add audio transceiver: %w", err)
+	}
+
+	// Add VP8 video track (sendonly) — keepalive frames prevent SFU from kicking us.
+	sampleTrack, sampleErr := webrtc.NewTrackLocalStaticSample(
+		webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeVP8},
+		"video", "tunnel-video",
+	)
+	if sampleErr != nil {
+		return fmt.Errorf("create video track: %w", sampleErr)
+	}
+	p.sampleTrack = sampleTrack
+	if _, err = p.pcPub.AddTransceiverFromTrack(sampleTrack, webrtc.RTPTransceiverInit{
+		Direction: webrtc.RTPTransceiverDirectionSendonly,
+	}); err != nil {
+		return fmt.Errorf("add video transceiver: %w", err)
+	}
+
+	// DataChannel labelled "sharing" — matches Telemost screen-sharing traffic;
+	// arbitrary labels are rejected by the SFU.
+	ordered := true
+	p.dc, err = p.pcPub.CreateDataChannel("sharing", &webrtc.DataChannelInit{Ordered: &ordered})
 	if err != nil {
 		return err
 	}
@@ -232,17 +280,30 @@ func (p *Peer) Connect(ctx context.Context) error {
 			p.monitorQueue(sessionCloseCh)
 		}()
 
+		// Start VP8 keepalive — must begin after DC opens to avoid sending
+		// before the SFU DTLS handshake completes.
+		p.wg.Add(1)
+		go func() {
+			defer p.wg.Done()
+			p.keepAliveVP8(sessionCloseCh)
+		}()
+
 		close(dcReady)
 	})
 
-	p.dc.OnClose(func() {
-		log.Println("DataChannel closed")
-		if !p.shuttingDown.Load() && p.onReconnect != nil {
-			log.Println("Calling reconnect callback for cleanup")
-			p.onReconnect(nil)
+	pubDC := p.dc
+	pubDC.OnClose(func() {
+		log.Println("[DC] Publisher olcrtc DC closed")
+		if p.shuttingDown.Load() || p.closed.Load() {
+			return
 		}
-		if !p.closed.Load() && !p.shuttingDown.Load() {
-			p.queueReconnect()
+		p.dcMu.Lock()
+		stillPub := (p.dc == pubDC)
+		p.dcMu.Unlock()
+		if stillPub {
+			log.Println("[DC] Publisher DC closed, waiting for subscriber DC (not reconnecting yet)")
+		} else {
+			log.Println("[DC] Publisher DC closed, forwarded DC active - OK")
 		}
 	})
 
@@ -253,22 +314,64 @@ func (p *Peer) Connect(ctx context.Context) error {
 	})
 
 	p.pcSub.OnDataChannel(func(dc *webrtc.DataChannel) {
-		log.Printf("Received datachannel: %s", dc.Label())
-		dc.OnClose(func() {
-			if p.shuttingDown.Load() {
-				log.Println("Received DataChannel closed during intentional shutdown")
-				return
-			}
-			log.Println("Received DataChannel closed - triggering reconnect")
-			if !p.closed.Load() {
-				p.queueReconnect()
-			}
-		})
+		log.Printf("[DC] Subscriber PC got DC: %s (state=%v)", dc.Label(), dc.ReadyState())
 		dc.OnMessage(func(msg webrtc.DataChannelMessage) {
 			if p.onData != nil && len(msg.Data) > 0 {
 				p.onData(msg.Data)
 			}
 		})
+		dc.OnClose(func() {
+			p.dcMu.Lock()
+			stillThis := (p.dc == dc)
+			p.dcMu.Unlock()
+			log.Printf("[DC] Subscriber DC closed (wasActive=%v) - NOT reconnecting (SFU behavior)", stillThis)
+		})
+		switchFn := func() {
+			log.Printf("[DC] Switching p.dc to subscriber DC: %s", dc.Label())
+			p.dcMu.Lock()
+			p.dc = dc
+			p.dcMu.Unlock()
+			p.drainReconnectQueue()
+		}
+		if dc.ReadyState() == webrtc.DataChannelStateOpen {
+			switchFn()
+		} else {
+			dc.OnOpen(func() { switchFn() })
+		}
+	})
+
+	p.pcPub.OnDataChannel(func(dc *webrtc.DataChannel) {
+		if dc.Label() != "sharing" {
+			log.Printf("[DC] Publisher PC got unexpected DC: %s (ignoring)", dc.Label())
+			return
+		}
+		log.Printf("[DC] Publisher PC got forwarded DC: %s (state=%v)", dc.Label(), dc.ReadyState())
+		dc.OnMessage(func(msg webrtc.DataChannelMessage) {
+			if p.onData != nil && len(msg.Data) > 0 {
+				p.onData(msg.Data)
+			}
+		})
+		dc.OnClose(func() {
+			p.dcMu.Lock()
+			stillThis := (p.dc == dc)
+			p.dcMu.Unlock()
+			if stillThis && !p.closed.Load() && !p.shuttingDown.Load() {
+				log.Println("[DC] Forwarded DC closed - reconnecting")
+				p.queueReconnect()
+			}
+		})
+		switchFn := func() {
+			log.Println("[DC] Switching p.dc to forwarded publisher DC")
+			p.dcMu.Lock()
+			p.dc = dc
+			p.dcMu.Unlock()
+			p.drainReconnectQueue()
+		}
+		if dc.ReadyState() == webrtc.DataChannelStateOpen {
+			switchFn()
+		} else {
+			dc.OnOpen(func() { switchFn() })
+		}
 	})
 
 	wsDialer := websocket.Dialer{
@@ -317,8 +420,20 @@ func (p *Peer) Connect(ctx context.Context) error {
 }
 
 func (p *Peer) Send(data []byte) error {
+	// Wait up to 5s for DC to become ready (subscriber DC may arrive after publisher DC closes)
 	if p.dc == nil || p.dc.ReadyState() != webrtc.DataChannelStateOpen {
-		return fmt.Errorf("datachannel not ready")
+		deadline := time.Now().Add(5 * time.Second)
+		for time.Now().Before(deadline) {
+			time.Sleep(50 * time.Millisecond)
+			if p.dc != nil && p.dc.ReadyState() == webrtc.DataChannelStateOpen {
+				break
+			}
+		}
+		if p.dc == nil || p.dc.ReadyState() != webrtc.DataChannelStateOpen {
+			log.Printf("[SEND] DC not ready after 5s wait")
+			return fmt.Errorf("datachannel not ready")
+		}
+		log.Printf("[SEND] DC became ready after wait (label=%s)", p.dc.Label())
 	}
 
 	if p.sendQueueClosed.Load() {
@@ -340,29 +455,47 @@ func (p *Peer) sendHello() error {
 		"uid": uuid.New().String(),
 		"hello": map[string]interface{}{
 			"participantMeta": map[string]interface{}{
-				"name":      p.name,
-				"role":      "SPEAKER",
-				"sendAudio": false,
-				"sendVideo": false,
+				"name":        p.name,
+				"role":        "SPEAKER",
+				"description": "",
+				"sendAudio":   false,
+				"sendVideo":   true,
 			},
 			"participantAttributes": map[string]interface{}{
 				"name": p.name,
 				"role": "SPEAKER",
 			},
 			"sendAudio":     false,
-			"sendVideo":     false,
+			"sendVideo":     true,
 			"sendSharing":   false,
 			"participantId": p.conn.PeerID,
 			"roomId":        p.conn.RoomID,
 			"serviceName":   "telemost",
 			"credentials":   p.conn.Credentials,
 			"capabilitiesOffer": map[string]interface{}{
-				"offerAnswerMode":        []string{"SEPARATE"},
-				"initialSubscriberOffer": []string{"ON_HELLO"},
-				"slotsMode":              []string{"FROM_CONTROLLER"},
-				"simulcastMode":          []string{"DISABLED"},
-				"selfVadStatus":          []string{"FROM_SERVER"},
-				"dataChannelSharing":     []string{"TO_RTP"},
+				"offerAnswerMode":              []string{"SEPARATE"},
+				"initialSubscriberOffer":       []string{"ON_HELLO"},
+				"slotsMode":                    []string{"FROM_CONTROLLER"},
+				"simulcastMode":                []string{"DISABLED", "STATIC"},
+				"selfVadStatus":                []string{"FROM_SERVER", "FROM_CLIENT"},
+				"dataChannelSharing":           []string{"TO_RTP"},
+				"videoEncoderConfig":           []string{"NO_CONFIG", "ONLY_INIT_CONFIG", "RUNTIME_CONFIG"},
+				"dataChannelVideoCodec":        []string{"VP8", "UNIQUE_CODEC_FROM_TRACK_DESCRIPTION"},
+				"bandwidthLimitationReason":    []string{"BANDWIDTH_REASON_DISABLED", "BANDWIDTH_REASON_ENABLED"},
+				"sdkDefaultDeviceManagement":   []string{"SDK_DEFAULT_DEVICE_MANAGEMENT_DISABLED", "SDK_DEFAULT_DEVICE_MANAGEMENT_ENABLED"},
+				"joinOrderLayout":              []string{"JOIN_ORDER_LAYOUT_DISABLED", "JOIN_ORDER_LAYOUT_ENABLED"},
+				"pinLayout":                    []string{"PIN_LAYOUT_DISABLED"},
+				"sendSelfViewVideoSlot":        []string{"SEND_SELF_VIEW_VIDEO_SLOT_DISABLED", "SEND_SELF_VIEW_VIDEO_SLOT_ENABLED"},
+				"serverLayoutTransition":       []string{"SERVER_LAYOUT_TRANSITION_DISABLED"},
+				"sdkPublisherOptimizeBitrate":  []string{"SDK_PUBLISHER_OPTIMIZE_BITRATE_DISABLED", "SDK_PUBLISHER_OPTIMIZE_BITRATE_FULL", "SDK_PUBLISHER_OPTIMIZE_BITRATE_ONLY_SELF"},
+				"sdkNetworkLostDetection":      []string{"SDK_NETWORK_LOST_DETECTION_DISABLED"},
+				"sdkNetworkPathMonitor":        []string{"SDK_NETWORK_PATH_MONITOR_DISABLED"},
+				"publisherVp9":                 []string{"PUBLISH_VP9_DISABLED", "PUBLISH_VP9_ENABLED"},
+				"svcMode":                      []string{"SVC_MODE_DISABLED", "SVC_MODE_L3T3", "SVC_MODE_L3T3_KEY"},
+				"subscriberOfferAsyncAck":      []string{"SUBSCRIBER_OFFER_ASYNC_ACK_DISABLED", "SUBSCRIBER_OFFER_ASYNC_ACK_ENABLED"},
+				"androidBluetoothRoutingFix":   []string{"ANDROID_BLUETOOTH_ROUTING_FIX_DISABLED"},
+				"fixedIceCandidatesPoolSize":   []string{"FIXED_ICE_CANDIDATES_POOL_SIZE_DISABLED"},
+				"subscriberDtlsPassiveMode":    []string{"SUBSCRIBER_DTLS_PASSIVE_MODE_DISABLED", "SUBSCRIBER_DTLS_PASSIVE_MODE_ENABLED"},
 			},
 			"sdkInfo": map[string]interface{}{
 				"implementation": "go",
@@ -1067,7 +1200,24 @@ func (p *Peer) processSendQueue(workerID int, sessionCloseCh <-chan struct{}) {
 				return
 			}
 			if p.dc == nil || p.dc.ReadyState() != webrtc.DataChannelStateOpen {
-				continue
+				// Wait up to 3s for DC to become ready (subscriber DC may arrive after publisher DC closes)
+				deadline := time.Now().Add(3 * time.Second)
+				for time.Now().Before(deadline) {
+					select {
+					case <-sessionCloseCh:
+						return
+					default:
+					}
+					time.Sleep(50 * time.Millisecond)
+					if p.dc != nil && p.dc.ReadyState() == webrtc.DataChannelStateOpen {
+						break
+					}
+				}
+				if p.dc == nil || p.dc.ReadyState() != webrtc.DataChannelStateOpen {
+					log.Printf("[WORKER-%d] DC still not ready after 3s, dropping frame", workerID)
+					continue
+				}
+				log.Printf("[WORKER-%d] DC became ready, sending buffered frame", workerID)
 			}
 			if p.trafficShape.MaxMessageSize > 0 && len(data) > p.trafficShape.MaxMessageSize {
 				log.Printf("[WORKER-%d] Refusing oversized DataChannel message size=%d limit=%d", workerID, len(data), p.trafficShape.MaxMessageSize)
@@ -1152,6 +1302,47 @@ func (p *Peer) CanSend() bool {
 		buffered = p.dc.BufferedAmount()
 	}
 	return queueLen < 1000 && buffered < 3*1024*1024
+}
+
+// keepAliveVP8 sends VP8 keepalive frames at 25 fps to prevent Telemost SFU
+// from closing the connection due to an inactive video track.
+// Keyframe every 60th frame (~2.4 s), interframe otherwise.
+func (p *Peer) keepAliveVP8(sessionCloseCh <-chan struct{}) {
+	const fps = 25
+	interval := time.Second / fps
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	var frameCount uint64
+	for {
+		select {
+		case <-ticker.C:
+			if p.sampleTrack == nil {
+				continue
+			}
+			frameCount++
+			var frame []byte
+			if frameCount%60 == 0 {
+				frame = vp8Keyframe
+			} else {
+				frame = vp8Interframe
+			}
+			if err := p.sampleTrack.WriteSample(media.Sample{
+				Data:     frame,
+				Duration: interval,
+			}); err != nil {
+				if frameCount <= 5 || frameCount%500 == 0 {
+					log.Printf("[VP8] WriteSample error frame=%d: %v", frameCount, err)
+				}
+			} else if frameCount <= 3 || frameCount%500 == 0 {
+				log.Printf("[VP8] keepalive frame=%d first=0x%02x", frameCount, frame[0])
+			}
+		case <-sessionCloseCh:
+			return
+		case <-p.closeCh:
+			return
+		}
+	}
 }
 
 func (p *Peer) nextSendDelay() time.Duration {
