@@ -619,7 +619,7 @@ func (p *Peer) handleSignaling() {
 			continue
 		}
 
-		if offer, ok := msg["subscriberSdpOffer"].(map[string]interface{}); ok && !pubSent {
+		if offer, ok := msg["subscriberSdpOffer"].(map[string]interface{}); ok {
 			sdp, _ := offer["sdp"].(string)
 			pcSeq, _ := offer["pcSeq"].(float64)
 
@@ -659,6 +659,8 @@ func (p *Peer) handleSignaling() {
 			p.wsMu.Unlock()
 
 			p.sendAck(uid)
+
+			if !pubSent {
 			time.Sleep(300 * time.Millisecond)
 
 			pubOffer, err := p.pcPub.CreateOffer(nil)
@@ -694,6 +696,7 @@ func (p *Peer) handleSignaling() {
 			p.wsMu.Unlock()
 
 			pubSent = true
+			} // end !pubSent
 		}
 
 		if answer, ok := msg["publisherSdpAnswer"].(map[string]interface{}); ok {
