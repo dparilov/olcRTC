@@ -20,7 +20,7 @@ import (
 
 const (
 	defaultSOCKSHost       = "127.0.0.1"
-	defaultSOCKSPort       = 1080
+	defaultSOCKSPort       = 10808
 	defaultReadyWait       = 60_000
 	defaultDiagnosticsWait = 35 * time.Second
 	defaultTunnelKey       = "d9d528926ca69ef9d422fcdd010cc27c8cd2c3ae37aa21927e2b3f8c59a921f3"
