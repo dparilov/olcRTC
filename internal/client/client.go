@@ -96,13 +96,18 @@ func RunWithReady(
 	c.mux = mux.New(c.clientID, c.sendFrame)
 
 	for peerID := range peerCount(duo) {
+		log.Printf("[STARTUP] Connecting peer %d...", peerID)
 		if err := c.addPeer(runCtx, roomURL, peerID, cancel); err != nil {
+			log.Printf("[STARTUP] Peer %d failed: %v", peerID, err)
 			return err
 		}
+		log.Printf("[STARTUP] Peer %d connected OK", peerID)
 	}
 
+	log.Println("[STARTUP] Sending reset signal...")
 	time.Sleep(100 * time.Millisecond)
 	c.sendResetSignal()
+	log.Println("[STARTUP] Reset signal sent, starting SOCKS listener...")
 
 	err = c.runSOCKS5(runCtx, socksHost, socksPort, socksUser, socksPass, onReady)
 
