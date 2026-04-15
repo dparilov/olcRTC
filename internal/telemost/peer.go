@@ -18,7 +18,6 @@ import (
 	"github.com/openlibrecommunity/olcrtc/internal/logger"
 	"github.com/openlibrecommunity/olcrtc/internal/protect"
 	"github.com/pion/webrtc/v4"
-	"github.com/pion/webrtc/v4/pkg/media"
 )
 
 const (
@@ -57,7 +56,7 @@ type Peer struct {
 	pcPub           *webrtc.PeerConnection
 	dc              *webrtc.DataChannel
 	sampleTrack     *webrtc.TrackLocalStaticSample
-	vp8FrameCount   uint64
+	vp8Sender       *VP8Sender
 	onData          func([]byte)
 	onReconnect     func(*webrtc.DataChannel)
 	reconnectCh     chan struct{}
@@ -246,6 +245,7 @@ func (p *Peer) Connect(ctx context.Context) error {
 		return fmt.Errorf("create video track: %w", sampleErr)
 	}
 	p.sampleTrack = sampleTrack
+	p.vp8Sender = NewVP8Sender(sampleTrack, 25)
 	if _, err = p.pcPub.AddTransceiverFromTrack(sampleTrack, webrtc.RTPTransceiverInit{
 		Direction: webrtc.RTPTransceiverDirectionSendonly,
 	}); err != nil {
@@ -265,14 +265,29 @@ func (p *Peer) Connect(ctx context.Context) error {
 	p.dc.OnOpen(func() {
 		log.Println("DataChannel opened")
 
-		numWorkers := 4
-		for i := 0; i < numWorkers; i++ {
-			p.wg.Add(1)
-			go func(workerID int) {
-				defer p.wg.Done()
-				p.processSendQueue(workerID, sessionCloseCh)
-			}(i)
-		}
+		// Forward sendQueue → VP8 data tunnel (replaces DC-based workers).
+		// Data is embedded in VP8 video frames because Telemost SFU does
+		// not relay DataChannel messages between peers.
+		p.wg.Add(1)
+		go func() {
+			defer p.wg.Done()
+			log.Println("[VP8-FWD] Started sendQueue → VP8 forwarder")
+			for {
+				select {
+				case data, ok := <-p.sendQueue:
+					if !ok {
+						return
+					}
+					if p.vp8Sender != nil {
+						p.vp8Sender.SendData(data)
+					}
+				case <-sessionCloseCh:
+					return
+				case <-p.closeCh:
+					return
+				}
+			}
+		}()
 
 		p.wg.Add(1)
 		go func() {
@@ -280,12 +295,12 @@ func (p *Peer) Connect(ctx context.Context) error {
 			p.monitorQueue(sessionCloseCh)
 		}()
 
-		// Start VP8 keepalive — must begin after DC opens to avoid sending
-		// before the SFU DTLS handshake completes.
+		// Start VP8 data tunnel — sends data + keepalive frames.
+		// Must begin after DC opens to avoid sending before DTLS handshake.
 		p.wg.Add(1)
 		go func() {
 			defer p.wg.Done()
-			p.keepAliveVP8(sessionCloseCh)
+			p.vp8Sender.Run(sessionCloseCh, p.closeCh)
 		}()
 
 		close(dcReady)
@@ -310,6 +325,25 @@ func (p *Peer) Connect(ctx context.Context) error {
 	p.dc.OnMessage(func(msg webrtc.DataChannelMessage) {
 		if p.onData != nil && len(msg.Data) > 0 {
 			p.onData(msg.Data)
+		}
+	})
+
+	// Receive remote VP8 video track — extract embedded data.
+	p.pcSub.OnTrack(func(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
+		log.Printf("[VP8RX] Got remote track: id=%s codec=%s", track.ID(), track.Codec().MimeType)
+		if strings.EqualFold(track.Codec().MimeType, webrtc.MimeTypeVP8) {
+			go ReadVP8Track(track, p.onData, p.closeCh)
+		} else {
+			log.Printf("[VP8RX] Ignoring non-VP8 track: %s", track.Codec().MimeType)
+			// Drain the track to avoid blocking
+			go func() {
+				buf := make([]byte, 1500)
+				for {
+					if _, _, err := track.Read(buf); err != nil {
+						return
+					}
+				}
+			}()
 		}
 	})
 
@@ -1304,46 +1338,6 @@ func (p *Peer) CanSend() bool {
 	return queueLen < 1000 && buffered < 3*1024*1024
 }
 
-// keepAliveVP8 sends VP8 keepalive frames at 25 fps to prevent Telemost SFU
-// from closing the connection due to an inactive video track.
-// Keyframe every 60th frame (~2.4 s), interframe otherwise.
-func (p *Peer) keepAliveVP8(sessionCloseCh <-chan struct{}) {
-	const fps = 25
-	interval := time.Second / fps
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-
-	var frameCount uint64
-	for {
-		select {
-		case <-ticker.C:
-			if p.sampleTrack == nil {
-				continue
-			}
-			frameCount++
-			var frame []byte
-			if frameCount%60 == 0 {
-				frame = vp8Keyframe
-			} else {
-				frame = vp8Interframe
-			}
-			if err := p.sampleTrack.WriteSample(media.Sample{
-				Data:     frame,
-				Duration: interval,
-			}); err != nil {
-				if frameCount <= 5 || frameCount%500 == 0 {
-					log.Printf("[VP8] WriteSample error frame=%d: %v", frameCount, err)
-				}
-			} else if frameCount <= 3 || frameCount%500 == 0 {
-				log.Printf("[VP8] keepalive frame=%d first=0x%02x", frameCount, frame[0])
-			}
-		case <-sessionCloseCh:
-			return
-		case <-p.closeCh:
-			return
-		}
-	}
-}
 
 func (p *Peer) nextSendDelay() time.Duration {
 	minDelay := p.trafficShape.MinDelay
