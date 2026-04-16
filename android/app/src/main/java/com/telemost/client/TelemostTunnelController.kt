@@ -32,8 +32,36 @@ class TelemostTunnelController(private val appContext: Context) {
             EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
         )
     } catch (e: Exception) {
-        // Fallback to regular prefs only if crypto init fails (should not happen)
-        appContext.getSharedPreferences("olcrtc_prefs", Context.MODE_PRIVATE)
+        // Fail-closed: do NOT fall back to plaintext SharedPreferences.
+        // Use a non-persistent in-memory map so the app runs but secrets
+        // are not saved to disk in an insecure way. The user will need
+        // to re-enter secrets on next launch.
+        android.util.Log.e("olcRTC", "Secure storage unavailable: ${e.message}. Secrets will NOT be persisted.")
+        object : SharedPreferences {
+            private val map = mutableMapOf<String, Any?>()
+            override fun getAll(): MutableMap<String, *> = map
+            override fun getString(key: String?, defValue: String?): String? = map[key] as? String ?: defValue
+            override fun getStringSet(key: String?, defValues: MutableSet<String>?): MutableSet<String>? = defValues
+            override fun getInt(key: String?, defValue: Int): Int = map[key] as? Int ?: defValue
+            override fun getLong(key: String?, defValue: Long): Long = defValue
+            override fun getFloat(key: String?, defValue: Float): Float = defValue
+            override fun getBoolean(key: String?, defValue: Boolean): Boolean = defValue
+            override fun contains(key: String?): Boolean = map.containsKey(key)
+            override fun edit(): SharedPreferences.Editor = object : SharedPreferences.Editor {
+                override fun putString(key: String?, value: String?): SharedPreferences.Editor { if (key != null) map[key] = value; return this }
+                override fun putStringSet(key: String?, values: MutableSet<String>?): SharedPreferences.Editor = this
+                override fun putInt(key: String?, value: Int): SharedPreferences.Editor { if (key != null) map[key] = value; return this }
+                override fun putLong(key: String?, value: Long): SharedPreferences.Editor = this
+                override fun putFloat(key: String?, value: Float): SharedPreferences.Editor = this
+                override fun putBoolean(key: String?, value: Boolean): SharedPreferences.Editor = this
+                override fun remove(key: String?): SharedPreferences.Editor { map.remove(key); return this }
+                override fun clear(): SharedPreferences.Editor { map.clear(); return this }
+                override fun commit(): Boolean = true
+                override fun apply() {}
+            }
+            override fun registerOnSharedPreferenceChangeListener(listener: SharedPreferences.OnSharedPreferenceChangeListener?) {}
+            override fun unregisterOnSharedPreferenceChangeListener(listener: SharedPreferences.OnSharedPreferenceChangeListener?) {}
+        }
     }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var diagnosticsJob: Job? = null
