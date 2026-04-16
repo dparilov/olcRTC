@@ -11,6 +11,7 @@ package rendezvous
 
 import (
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -18,6 +19,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 )
@@ -28,12 +30,16 @@ const (
 )
 
 // RoomRecord is the contract for the rendezvous file on Yandex Disk.
+// Version 2 adds KeyVersion, RecordID and Sig for authenticated records.
 type RoomRecord struct {
-	RoomID    string `json:"room_id"`
-	RoomURL   string `json:"room_url"`
-	CreatedAt string `json:"created_at"` // ISO 8601
-	ExpiresAt string `json:"expires_at"` // ISO 8601
-	Version   int    `json:"version"`    // schema version, currently 1
+	RoomID     string `json:"room_id"`
+	RoomURL    string `json:"room_url"`
+	CreatedAt  string `json:"created_at"`            // ISO 8601
+	ExpiresAt  string `json:"expires_at"`            // ISO 8601
+	Version    int    `json:"version"`               // schema version: 2
+	KeyVersion int    `json:"key_version,omitempty"` // which master secret signed this (1=current, 0=legacy)
+	RecordID   string `json:"record_id,omitempty"`   // random nonce for replay prevention
+	Sig        string `json:"sig,omitempty"`         // HMAC-SHA256 over canonical JSON (without sig)
 }
 
 // DeriveKey computes a deterministic encryption key from a master secret and room ID.
@@ -42,6 +48,133 @@ func DeriveKey(masterSecret, roomID string) string {
 	mac := hmac.New(sha256.New, []byte(masterSecret))
 	mac.Write([]byte(roomID))
 	return hex.EncodeToString(mac.Sum(nil))
+}
+
+// generateRecordID creates a random 16-byte hex nonce for replay prevention.
+func generateRecordID() string {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return fmt.Sprintf("%x", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(b)
+}
+
+// canonicalJSON produces a deterministic JSON representation of the record
+// with the "sig" field removed, suitable for signing/verification.
+func canonicalJSON(record *RoomRecord) ([]byte, error) {
+	data, err := json.Marshal(record)
+	if err != nil {
+		return nil, err
+	}
+	var m map[string]interface{}
+	if err := json.Unmarshal(data, &m); err != nil {
+		return nil, err
+	}
+	delete(m, "sig")
+
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	var buf strings.Builder
+	buf.WriteByte('{')
+	for i, k := range keys {
+		if i > 0 {
+			buf.WriteByte(',')
+		}
+		keyJSON, _ := json.Marshal(k)
+		valJSON, _ := json.Marshal(m[k])
+		buf.Write(keyJSON)
+		buf.WriteByte(':')
+		buf.Write(valJSON)
+	}
+	buf.WriteByte('}')
+	return []byte(buf.String()), nil
+}
+
+// SignRecord signs a room record using the master secret.
+// Sets KeyVersion, RecordID, Version and Sig fields on the record.
+func SignRecord(record *RoomRecord, masterSecret string, keyVersion int) error {
+	record.Version = 2
+	record.KeyVersion = keyVersion
+	record.RecordID = generateRecordID()
+	record.Sig = ""
+
+	canonical, err := canonicalJSON(record)
+	if err != nil {
+		return fmt.Errorf("canonical json: %w", err)
+	}
+
+	mac := hmac.New(sha256.New, []byte(masterSecret))
+	mac.Write(canonical)
+	record.Sig = hex.EncodeToString(mac.Sum(nil))
+	return nil
+}
+
+// VerifyRecord checks the HMAC signature on a room record.
+func VerifyRecord(record *RoomRecord, masterSecret string) error {
+	if record.Sig == "" {
+		return fmt.Errorf("unsigned record (no sig field)")
+	}
+	if record.Version < 2 {
+		return fmt.Errorf("legacy record version %d (signing requires v2+)", record.Version)
+	}
+
+	expectedSig := record.Sig
+	record.Sig = ""
+	defer func() { record.Sig = expectedSig }()
+
+	canonical, err := canonicalJSON(record)
+	if err != nil {
+		return fmt.Errorf("canonical json: %w", err)
+	}
+
+	mac := hmac.New(sha256.New, []byte(masterSecret))
+	mac.Write(canonical)
+	computedSig := hex.EncodeToString(mac.Sum(nil))
+
+	if !hmac.Equal([]byte(computedSig), []byte(expectedSig)) {
+		return fmt.Errorf("signature mismatch")
+	}
+	return nil
+}
+
+// VerifyRecordMulti tries current then previous secret. Returns which matched (1=current, 2=previous).
+func VerifyRecordMulti(record *RoomRecord, currentSecret, previousSecret string) (int, error) {
+	if err := VerifyRecord(record, currentSecret); err == nil {
+		return 1, nil
+	}
+	if previousSecret != "" {
+		if err := VerifyRecord(record, previousSecret); err == nil {
+			return 2, nil
+		}
+	}
+	return 0, fmt.Errorf("signature verification failed against all known secrets")
+}
+
+// FetchAndVerifyRoom reads the room record and verifies its signature.
+// Returns the record and which secret matched (1=current, 2=previous).
+func FetchAndVerifyRoom(oauthToken, currentSecret, previousSecret string) (*RoomRecord, int, error) {
+	record, err := FetchRoom(oauthToken)
+	if err != nil {
+		return nil, 0, err
+	}
+	if record == nil {
+		return nil, 0, nil
+	}
+	if IsExpired(record) {
+		return nil, 0, fmt.Errorf("room %s expired at %s", record.RoomID, record.ExpiresAt)
+	}
+	if record.Version < 2 || record.Sig == "" {
+		return nil, 0, fmt.Errorf("unsigned/legacy record (version=%d), rejecting", record.Version)
+	}
+	matched, err := VerifyRecordMulti(record, currentSecret, previousSecret)
+	if err != nil {
+		return nil, 0, fmt.Errorf("signature verification: %w", err)
+	}
+	return record, matched, nil
 }
 
 // PublishRoom writes (or overwrites) the active room record to Yandex Disk.

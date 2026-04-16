@@ -308,13 +308,15 @@ func runDiscoverClient(ctx context.Context, cfg config) error {
 		return fmt.Errorf("--master-secret required for --discover mode")
 	}
 
+	previousSecret := os.Getenv("OLCRTC_PREVIOUS_SECRET") // rotation window support
+
 	// Retry loop: on conference end, re-fetch room from Disk and reconnect
 	for attempt := 1; ; attempt++ {
 		log.Printf("[DISCOVER] Attempt %d: fetching room from Yandex Disk...", attempt)
 
-		record, err := rendezvous.FetchRoom(cfg.oauthToken)
+		record, matched, err := rendezvous.FetchAndVerifyRoom(cfg.oauthToken, cfg.masterSecret, previousSecret)
 		if err != nil {
-			log.Printf("[DISCOVER] Fetch error: %v, retrying in 10s...", err)
+			log.Printf("[DISCOVER] Fetch/verify error: %v, retrying in 10s...", err)
 			select {
 			case <-time.After(10 * time.Second):
 				continue
@@ -331,18 +333,16 @@ func runDiscoverClient(ctx context.Context, cfg config) error {
 				return ctx.Err()
 			}
 		}
-		if rendezvous.IsExpired(record) {
-			log.Printf("[DISCOVER] Room %s expired, retrying in 10s...", record.RoomID)
-			select {
-			case <-time.After(10 * time.Second):
-				continue
-			case <-ctx.Done():
-				return ctx.Err()
-			}
+
+		// Use the secret that matched for key derivation
+		secret := cfg.masterSecret
+		if matched == 2 {
+			secret = previousSecret
+			log.Println("[DISCOVER] Record signed with previous secret (rotation window)")
 		}
 
-		keyHex := rendezvous.DeriveKey(cfg.masterSecret, record.RoomID)
-		log.Printf("[DISCOVER] Room: %s, connecting...", record.RoomURL)
+		keyHex := rendezvous.DeriveKey(secret, record.RoomID)
+		log.Printf("[DISCOVER] Verified room: %s (sig OK, key_version=%d)", record.RoomURL, record.KeyVersion)
 
 		err = client.Run(
 			ctx,
@@ -376,14 +376,15 @@ func runWatchServer(ctx context.Context, cfg config) error {
 		return fmt.Errorf("--master-secret required for --discover server mode")
 	}
 
+	previousSecret := os.Getenv("OLCRTC_PREVIOUS_SECRET") // rotation window support
 	var lastRoomID string
 
 	for {
 		log.Println("[WATCH-SRV] Polling Yandex Disk for room...")
 
-		record, err := rendezvous.FetchRoom(cfg.oauthToken)
+		record, matched, err := rendezvous.FetchAndVerifyRoom(cfg.oauthToken, cfg.masterSecret, previousSecret)
 		if err != nil {
-			log.Printf("[WATCH-SRV] Fetch error: %v, retrying in 10s...", err)
+			log.Printf("[WATCH-SRV] Fetch/verify error: %v, retrying in 10s...", err)
 			select {
 			case <-time.After(10 * time.Second):
 				continue
@@ -391,7 +392,7 @@ func runWatchServer(ctx context.Context, cfg config) error {
 				return ctx.Err()
 			}
 		}
-		if record == nil || rendezvous.IsExpired(record) {
+		if record == nil {
 			log.Println("[WATCH-SRV] No active room yet, polling in 10s...")
 			select {
 			case <-time.After(10 * time.Second):
@@ -411,9 +412,16 @@ func runWatchServer(ctx context.Context, cfg config) error {
 			}
 		}
 
+		// Use the secret that matched for key derivation
+		secret := cfg.masterSecret
+		if matched == 2 {
+			secret = previousSecret
+			log.Println("[WATCH-SRV] Record signed with previous secret (rotation window)")
+		}
+
 		lastRoomID = record.RoomID
-		keyHex := rendezvous.DeriveKey(cfg.masterSecret, record.RoomID)
-		log.Printf("[WATCH-SRV] New room found: %s, connecting...", record.RoomURL)
+		keyHex := rendezvous.DeriveKey(secret, record.RoomID)
+		log.Printf("[WATCH-SRV] Verified room: %s (sig OK, key_version=%d)", record.RoomURL, record.KeyVersion)
 
 		err = server.Run(
 			ctx,
@@ -445,12 +453,16 @@ func publishRoomToDisk(oauthToken, masterSecret, roomID, roomURL string, rotateH
 		RoomURL:   roomURL,
 		CreatedAt: time.Now().Format(time.RFC3339),
 		ExpiresAt: time.Now().Add(time.Duration(rotateHours) * time.Hour).Format(time.RFC3339),
-		Version:   1,
+	}
+	// Sign the record with current master secret (key_version=1)
+	if err := rendezvous.SignRecord(record, masterSecret, 1); err != nil {
+		log.Printf("[CLIENT] Failed to sign room record: %v", err)
+		return
 	}
 	if err := rendezvous.PublishRoom(oauthToken, record); err != nil {
 		log.Printf("[CLIENT] Failed to publish room to Yandex Disk: %v", err)
 	} else {
-		log.Printf("[CLIENT] Room %s published to Yandex Disk (expires in %dh)", roomID, rotateHours)
+		log.Printf("[CLIENT] Room %s published to Yandex Disk (signed v%d, expires in %dh)", roomID, record.Version, rotateHours)
 	}
 }
 
