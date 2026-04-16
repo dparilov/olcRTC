@@ -72,7 +72,6 @@ private fun MainScreen(controller: TelemostTunnelController) {
         var oauthToken by remember { mutableStateOf(controller.getOAuthToken()) }
         var masterSecret by remember { mutableStateOf(controller.getMasterSecret()) }
         var roomUrl by remember { mutableStateOf(controller.getRoomUrl()) }
-        var showSettings by remember { mutableStateOf(controller.getMasterSecret().isBlank()) }
         var validationMsg by remember { mutableStateOf("") }
 
         // Secret status
@@ -82,11 +81,7 @@ private fun MainScreen(controller: TelemostTunnelController) {
             style = MaterialTheme.typography.bodySmall
         )
 
-        Button(onClick = { showSettings = !showSettings }) {
-            Text(if (showSettings) "Hide Settings" else "Settings")
-        }
 
-        if (showSettings) {
             Text("Security", style = MaterialTheme.typography.titleSmall)
             OutlinedTextField(
                 value = masterSecret,
@@ -125,7 +120,6 @@ private fun MainScreen(controller: TelemostTunnelController) {
                 Text(validationMsg, color = MaterialTheme.colorScheme.error)
             }
             // Settings auto-save on Launch/Publish — no separate Save button needed
-        }
 
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = {
