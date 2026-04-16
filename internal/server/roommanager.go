@@ -22,10 +22,11 @@ type RoomManager struct {
 	rotateInterval time.Duration
 	apiPort        int // 0 = no HTTP API
 
-	mu      sync.RWMutex
-	roomID  string
-	roomURL string
-	keyHex  string
+	mu        sync.RWMutex
+	roomID    string
+	roomURL   string
+	keyHex    string
+	expiresAt string // real expiry from room record
 
 	onNewRoom func(roomURL, keyHex string) // callback when room changes
 }
@@ -112,13 +113,15 @@ func (rm *RoomManager) createAndPublish() error {
 	roomURL := "https://telemost.yandex.ru/j/" + conf.RoomID
 	now := time.Now()
 
-	// Publish to Yandex Disk (passive rendezvous)
+	// Publish signed room record to Yandex Disk (passive rendezvous)
 	record := &rendezvous.RoomRecord{
 		RoomID:    conf.RoomID,
 		RoomURL:   roomURL,
 		CreatedAt: now.Format(time.RFC3339),
 		ExpiresAt: now.Add(rm.rotateInterval).Format(time.RFC3339),
-		Version:   1,
+	}
+	if err := rendezvous.SignRecord(record, rm.masterSecret, 1); err != nil {
+		return fmt.Errorf("sign record: %w", err)
 	}
 	if err := rendezvous.PublishRoom(rm.oauthToken, record); err != nil {
 		return fmt.Errorf("publish to disk: %w", err)
@@ -128,9 +131,10 @@ func (rm *RoomManager) createAndPublish() error {
 	rm.roomID = conf.RoomID
 	rm.roomURL = roomURL
 	rm.keyHex = keyHex
+	rm.expiresAt = record.ExpiresAt
 	rm.mu.Unlock()
 
-	log.Printf("[ROOM-MGR] Published room %s to Yandex Disk (rotates in %v)", conf.RoomID, rm.rotateInterval)
+	log.Printf("[ROOM-MGR] Published room %s to Yandex Disk (signed v%d, rotates in %v)", conf.RoomID, record.Version, rm.rotateInterval)
 
 	if rm.onNewRoom != nil {
 		rm.onNewRoom(roomURL, keyHex)
@@ -169,7 +173,7 @@ func (rm *RoomManager) handleRoom(w http.ResponseWriter, r *http.Request) {
 	info := RoomInfo{
 		RoomID:  rm.roomID,
 		RoomURL: rm.roomURL,
-		Expires: time.Now().Add(rm.rotateInterval).Format(time.RFC3339),
+		Expires: rm.expiresAt, // real expiry from room record, not synthetic
 	}
 	rm.mu.RUnlock()
 
