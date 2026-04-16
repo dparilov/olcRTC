@@ -16,10 +16,13 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 
@@ -62,6 +65,38 @@ private fun MainScreen(controller: TelemostTunnelController) {
         Text("Meeting: $meeting")
         Text("Diagnostics: $diagnostics")
         Text(OlcRtcProbe.probe())
+
+        // Settings section
+        var keyHex by remember { mutableStateOf(controller.getKeyHex()) }
+        var socksPort by remember { mutableStateOf(controller.getSocksPort().toString()) }
+        var showSettings by remember { mutableStateOf(false) }
+
+        Button(onClick = { showSettings = !showSettings }) {
+            Text(if (showSettings) "Hide Settings" else "Settings")
+        }
+
+        if (showSettings) {
+            OutlinedTextField(
+                value = keyHex,
+                onValueChange = { keyHex = it },
+                label = { Text("Encryption Key (hex)") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true
+            )
+            OutlinedTextField(
+                value = socksPort,
+                onValueChange = { socksPort = it },
+                label = { Text("SOCKS Port") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true
+            )
+            Button(onClick = {
+                controller.setKeyHex(keyHex)
+                socksPort.toIntOrNull()?.let { controller.setSocksPort(it) }
+            }) {
+                Text("Save Settings")
+            }
+        }
 
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = { controller.launchFromClipboard() }) {

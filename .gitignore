@@ -248,4 +248,4 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
-build/
+build/android/local.properties

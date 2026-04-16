@@ -8,7 +8,10 @@ import java.net.URL
 import javax.net.ssl.HttpsURLConnection
 
 object SpeedtestRunner {
+    private var socksPort = 1080
+
     suspend fun runAll(socksHost: String, socksPort: Int): String = withContext(Dispatchers.IO) {
+        this@SpeedtestRunner.socksPort = socksPort
         val results = mutableListOf<String>()
         results += runCatching { probe("Yandex speedtest", "https://yandex.ru/internet") }
             .fold(
@@ -28,7 +31,7 @@ object SpeedtestRunner {
     private fun probe(name: String, target: String): String {
         val started = System.currentTimeMillis()
         val url = URL(target)
-        val conn = (url.openConnection(proxy("127.0.0.1", 1080)) as HttpsURLConnection).apply {
+        val conn = (url.openConnection(proxy("127.0.0.1", socksPort)) as HttpsURLConnection).apply {
             connectTimeout = 15_000
             readTimeout = 15_000
             requestMethod = "GET"

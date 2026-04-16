@@ -13,10 +13,12 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import android.content.SharedPreferences
 import mobile.LogWriter
 import mobile.Mobile
 
 class TelemostTunnelController(private val appContext: Context) {
+    private val prefs: SharedPreferences = appContext.getSharedPreferences("olcrtc_prefs", Context.MODE_PRIVATE)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var diagnosticsJob: Job? = null
     private var lastHandledIntentPayload: String? = null
@@ -62,6 +64,20 @@ class TelemostTunnelController(private val appContext: Context) {
         }
 
         launchTunnel(roomId)
+    }
+
+    fun getKeyHex(): String = prefs.getString("key_hex", DEFAULT_KEY_HEX) ?: DEFAULT_KEY_HEX
+
+    fun setKeyHex(key: String) {
+        prefs.edit().putString("key_hex", key).apply()
+        appendLog("Encryption key updated")
+    }
+
+    fun getSocksPort(): Int = prefs.getInt("socks_port", DEFAULT_SOCKS_PORT)
+
+    fun setSocksPort(port: Int) {
+        prefs.edit().putInt("socks_port", port).apply()
+        appendLog("SOCKS port updated to $port")
     }
 
     fun stopTunnel() {
@@ -124,13 +140,16 @@ class TelemostTunnelController(private val appContext: Context) {
 
         scope.launch {
             try {
-                Mobile.start(roomId, DEFAULT_KEY_HEX, DEFAULT_SOCKS_PORT.toLong(), false, "", "")
+                val keyHex = getKeyHex()
+                val socksPort = getSocksPort()
+                Mobile.start(roomId, keyHex, socksPort.toLong(), false, "", "")
                 _status.value = "Connecting to Telemost"
                 appendLog("Mobile.start completed, waiting ready")
                 Mobile.waitReady(READY_TIMEOUT_MS)
                 _status.value = "SOCKS ready"
                 _diagnostics.value = "Diagnostics available (manual start recommended)"
-                appendLog("Tunnel ready on local SOCKS port $DEFAULT_SOCKS_PORT")
+                val port = getSocksPort()
+                appendLog("Tunnel ready on local SOCKS port $port")
                 scheduleReconnectWatchdog()
             } catch (t: Throwable) {
                 _status.value = "Error"
