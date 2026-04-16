@@ -6,7 +6,7 @@ SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 PROJECT_ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
 BUILD_DIR="$PROJECT_ROOT/build/windows-export"
 GOCACHE_DIR="$PROJECT_ROOT/build/.gocache"
-TOOLCHAIN_CANDIDATE="/home/dima/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.25.0.linux-amd64/bin/go"
+TOOLCHAIN_CANDIDATE="${GOPATH:-$HOME/go}/pkg/mod/golang.org/toolchain@v0.0.1-go1.25.0.linux-amd64/bin/go"
 
 mkdir -p "$BUILD_DIR" "$GOCACHE_DIR"
 

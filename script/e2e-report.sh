@@ -7,8 +7,10 @@ CLIENT_LOG="${3:-/tmp/e2e-client.log}"
 SERVER_LOG="${4:-/tmp/e2e-server.log}"
 SOCKS_RESULT="${5:-}"
 OUTPUT="${6:-/tmp/e2e-report-${PLATFORM}.html}"
+EXPECTED_IP="${OLCRTC_EXPECTED_IP:-}"
 TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-COMMIT=$(cd /home/dima/projects/telemost/olcRTC && git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+COMMIT=$(cd "$SCRIPT_DIR/.." && git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 
 CLIENT_PUBLISH=$(grep -c "published to Yandex Disk" "$CLIENT_LOG" 2>/dev/null || echo 0)
 CLIENT_KEY=$(grep -c "Key derived from master secret" "$CLIENT_LOG" 2>/dev/null || echo 0)
@@ -23,7 +25,7 @@ SERVER_DATA_RX=$(grep -c "TUNNEL DATA" "$SERVER_LOG" 2>/dev/null || echo 0)
 SERVER_DATA_TX=$(grep -c "SendData" "$SERVER_LOG" 2>/dev/null || echo 0)
 
 SOCKS_IP=$(echo "$SOCKS_RESULT" | grep -o '"origin": "[^"]*"' | cut -d'"' -f4 || echo "N/A")
-if [ "$SOCKS_IP" = "46.161.15.138" ]; then SOCKS_OK="true"; else SOCKS_OK="false"; fi
+if [ -n "$EXPECTED_IP" ] && [ "$SOCKS_IP" = "$EXPECTED_IP" ]; then SOCKS_OK="true"; else SOCKS_OK="false"; fi
 
 pass='<span class="pass">PASS</span>'
 fail='<span class="fail">FAIL</span>'
@@ -32,10 +34,10 @@ bool_val() { if [ "$1" = "true" ]; then echo "$pass"; else echo "$fail"; fi; }
 
 if [ "$SOCKS_OK" = "true" ]; then
   summary_class="pass-bg"
-  summary_text="E2E TUNNEL TEST PASSED - Traffic exits at VPS IP ${SOCKS_IP}"
+  summary_text="E2E TUNNEL TEST PASSED - Traffic exits at expected IP ${SOCKS_IP}"
 else
   summary_class="fail-bg"
-  summary_text="E2E TUNNEL TEST FAILED - Expected VPS IP, got: ${SOCKS_IP}"
+  summary_text="E2E TUNNEL TEST FAILED - Expected ${EXPECTED_IP:-'(not set)'}, got: ${SOCKS_IP}"
 fi
 
 cat > "$OUTPUT" << HTMLEOF
@@ -71,7 +73,7 @@ pre{background:#0d1117;padding:15px;border-radius:5px;overflow-x:auto;font-size:
 <tr><td>VP8 RX from server</td><td>$(check_val $CLIENT_VP8RX)</td><td>${CLIENT_VP8RX} frames</td></tr>
 <tr><td>No secrets in argv</td><td>$(bool_val true)</td><td>ps aux verified</td></tr>
 </table>
-<h2>Server Tests (VPS 46.161.15.138)</h2>
+<h2>Server Tests</h2>
 <table>
 <tr><th>Test</th><th>Result</th><th>Details</th></tr>
 <tr><td>Room discovered from Yandex Disk</td><td>$(check_val $SERVER_DISCOVERED)</td><td>Passive rendezvous</td></tr>
@@ -83,7 +85,7 @@ pre{background:#0d1117;padding:15px;border-radius:5px;overflow-x:auto;font-size:
 <table>
 <tr><th>Test</th><th>Result</th><th>Details</th></tr>
 <tr><td>HTTPS through tunnel</td><td>$(bool_val $SOCKS_OK)</td><td>curl -x socks5h://127.0.0.1:18090 httpbin.org/ip</td></tr>
-<tr><td>Exit IP = VPS</td><td>$(bool_val $SOCKS_OK)</td><td>Expected: 46.161.15.138, Got: ${SOCKS_IP}</td></tr>
+<tr><td>Exit IP matches expected</td><td>$(bool_val $SOCKS_OK)</td><td>Expected: ${EXPECTED_IP:-'(not set)'}, Got: ${SOCKS_IP}</td></tr>
 </table>
 <h2>Client Log (last 30 lines)</h2>
 <pre>$(tail -30 "$CLIENT_LOG" 2>/dev/null || echo "N/A")</pre>
