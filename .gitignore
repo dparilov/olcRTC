@@ -249,3 +249,6 @@ go.work.sum
 # .idea/
 # .vscode/
 build/android/local.properties
+build/
+*.exe
+*.aar

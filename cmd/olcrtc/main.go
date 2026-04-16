@@ -3,13 +3,16 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sync"
 	"syscall"
 	"time"
 
@@ -32,6 +35,13 @@ type config struct {
 	dnsServer      string
 	socksProxyAddr string
 	socksProxyPort int
+	// Auto-room management (server)
+	autoRoom       bool
+	oauthToken     string
+	rotateHours    int
+	apiPort        int
+	// API-based room discovery (client)
+	apiURL         string
 }
 
 var (
@@ -98,6 +108,11 @@ func parseFlags() config {
 	flag.StringVar(&cfg.dnsServer, "dns", "1.1.1.1:53", "DNS server (default: Cloudflare 1.1.1.1)")
 	flag.StringVar(&cfg.socksProxyAddr, "socks-proxy", "", "SOCKS5 proxy address (server only)")
 	flag.IntVar(&cfg.socksProxyPort, "socks-proxy-port", 1080, "SOCKS5 proxy port (server only)")
+	flag.BoolVar(&cfg.autoRoom, "auto-room", false, "Auto-create and rotate Telemost rooms (server only)")
+	flag.StringVar(&cfg.oauthToken, "oauth-token", "", "Yandex OAuth token for room creation")
+	flag.IntVar(&cfg.rotateHours, "rotate-hours", 3, "Room rotation interval in hours")
+	flag.IntVar(&cfg.apiPort, "api-port", 8080, "HTTP API port for room discovery")
+	flag.StringVar(&cfg.apiURL, "api-url", "", "Server API URL for room discovery (client only, e.g. http://server:8080/api/room)")
 	flag.Parse()
 
 	return cfg
@@ -117,7 +132,7 @@ func validateConfig(cfg config) error {
 	switch {
 	case cfg.provider != "telemost":
 		return errUnsupportedProvider
-	case cfg.roomID == "":
+	case cfg.roomID == "" && !cfg.autoRoom && cfg.apiURL == "":
 		return errRoomIDRequired
 	case cfg.mode != "srv" && cfg.mode != "cnc":
 		return errModeRequired
@@ -150,31 +165,130 @@ func loadNames(dataDir string) error {
 }
 
 func runMode(ctx context.Context, cfg config, errCh chan<- error) {
-	roomURL := "https://telemost.yandex.ru/j/" + cfg.roomID
-
 	switch cfg.mode {
 	case "srv":
-		errCh <- server.Run(
-			ctx,
-			roomURL,
-			cfg.keyHex,
-			cfg.duo,
-			cfg.dnsServer,
-			cfg.socksProxyAddr,
-			cfg.socksProxyPort,
-		)
+		if cfg.autoRoom {
+			errCh <- runAutoRoomServer(ctx, cfg)
+		} else {
+			roomURL := "https://telemost.yandex.ru/j/" + cfg.roomID
+			errCh <- server.Run(
+				ctx,
+				roomURL,
+				cfg.keyHex,
+				cfg.duo,
+				cfg.dnsServer,
+				cfg.socksProxyAddr,
+				cfg.socksProxyPort,
+			)
+		}
 	case "cnc":
-		errCh <- client.Run(
-			ctx,
-			roomURL,
-			cfg.keyHex,
-			cfg.socksPort,
-			cfg.duo,
-			cfg.socksHost,
-			"",
-			"",
-		)
+		if cfg.apiURL != "" {
+			errCh <- runAPIClient(ctx, cfg)
+		} else {
+			roomURL := "https://telemost.yandex.ru/j/" + cfg.roomID
+			errCh <- client.Run(
+				ctx,
+				roomURL,
+				cfg.keyHex,
+				cfg.socksPort,
+				cfg.duo,
+				cfg.socksHost,
+				"",
+				"",
+			)
+		}
 	}
+}
+
+func runAutoRoomServer(ctx context.Context, cfg config) error {
+	if cfg.oauthToken == "" {
+		return fmt.Errorf("--oauth-token required for --auto-room mode")
+	}
+
+	rotateInterval := time.Duration(cfg.rotateHours) * time.Hour
+	rm := server.NewRoomManager(cfg.oauthToken, rotateInterval, cfg.apiPort)
+
+	var serverCancel context.CancelFunc
+	var serverCtx context.Context
+	var wg sync.WaitGroup
+
+	rm.SetNewRoomCallback(func(roomURL, keyHex string) {
+		// Cancel previous server instance
+		if serverCancel != nil {
+			log.Println("[AUTO-ROOM] Stopping previous server for room rotation...")
+			serverCancel()
+			wg.Wait()
+		}
+
+		// Start new server instance
+		serverCtx, serverCancel = context.WithCancel(ctx)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			log.Printf("[AUTO-ROOM] Starting server for room: %s", roomURL)
+			if err := server.Run(
+				serverCtx,
+				roomURL,
+				keyHex,
+				cfg.duo,
+				cfg.dnsServer,
+				cfg.socksProxyAddr,
+				cfg.socksProxyPort,
+			); err != nil {
+				log.Printf("[AUTO-ROOM] Server error: %v", err)
+			}
+		}()
+	})
+
+	return rm.Run(ctx)
+}
+
+func runAPIClient(ctx context.Context, cfg config) error {
+	log.Printf("[API-CLIENT] Fetching room from %s...", cfg.apiURL)
+
+	roomURL, keyHex, err := fetchRoomFromAPI(cfg.apiURL)
+	if err != nil {
+		return fmt.Errorf("fetch room from API: %w", err)
+	}
+
+	log.Printf("[API-CLIENT] Got room: %s", roomURL)
+
+	return client.Run(
+		ctx,
+		roomURL,
+		keyHex,
+		cfg.socksPort,
+		cfg.duo,
+		cfg.socksHost,
+		"",
+		"",
+	)
+}
+
+func fetchRoomFromAPI(apiURL string) (string, string, error) {
+	resp, err := http.Get(apiURL)
+	if err != nil {
+		return "", "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", "", fmt.Errorf("API returned %d", resp.StatusCode)
+	}
+
+	var info struct {
+		RoomURL string `json:"room_url"`
+		KeyHex  string `json:"key_hex"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+		return "", "", err
+	}
+
+	if info.RoomURL == "" {
+		return "", "", fmt.Errorf("API returned empty room_url")
+	}
+
+	return info.RoomURL, info.KeyHex, nil
 }
 
 func waitForShutdown(errCh <-chan error) error {
