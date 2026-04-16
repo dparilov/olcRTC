@@ -206,6 +206,7 @@ func (p *Peer) Connect(ctx context.Context) error {
 	p.pcSub.OnTrack(func(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
 		log.Printf("[VP8RX] Got remote track: id=%s codec=%s", track.ID(), track.Codec().MimeType)
 		if strings.EqualFold(track.Codec().MimeType, webrtc.MimeTypeVP8) {
+			p.hasVP8Track.Store(true)
 			go ReadVP8Track(track, p.onData, p.closeCh)
 		} else {
 			log.Printf("[VP8RX] Ignoring non-VP8 track: %s", track.Codec().MimeType)
@@ -251,6 +252,7 @@ func (p *Peer) Connect(ctx context.Context) error {
 	p.pcPub.OnTrack(func(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
 		log.Printf("[VP8RX] PUB got remote track: id=%s codec=%s", track.ID(), track.Codec().MimeType)
 		if strings.EqualFold(track.Codec().MimeType, webrtc.MimeTypeVP8) {
+			p.hasVP8Track.Store(true)
 			go ReadVP8Track(track, p.onData, p.closeCh)
 		} else {
 			go func() {

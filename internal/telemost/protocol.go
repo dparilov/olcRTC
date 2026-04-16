@@ -257,6 +257,35 @@ func (p *Peer) handleSignaling() {
 			})
 			p.wsMu.Unlock()
 			log.Println("[WS] setSlots sent")
+
+			// Periodic setSlots re-send until VP8 track is received
+			go func() {
+				ticker := time.NewTicker(10 * time.Second)
+				defer ticker.Stop()
+				for i := 0; i < 30; i++ {
+					select {
+					case <-ticker.C:
+						if p.hasVP8Track.Load() {
+							log.Println("[WS] VP8 track received, stopping periodic setSlots")
+							return
+						}
+						p.wsMu.Lock()
+						p.ws.WriteJSON(map[string]interface{}{
+							"uid": uuid.New().String(),
+							"setSlots": map[string]interface{}{
+								"slots":          []map[string]interface{}{{"width": 320, "height": 240}},
+								"audioSlotsCount": 1,
+								"key":            1,
+								"nLastConfig":    map[string]interface{}{"nCount": 1, "showInSubgrid": false},
+							},
+						})
+						p.wsMu.Unlock()
+						log.Println("[WS] setSlots periodic re-send (waiting for VP8 track)")
+					case <-p.closeCh:
+						return
+					}
+				}
+			}()
 		}
 
 		if answer, ok := msg["publisherSdpAnswer"].(map[string]interface{}); ok {

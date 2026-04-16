@@ -58,6 +58,7 @@ type Peer struct {
 	reconnecting    atomic.Bool
 	shuttingDown    atomic.Bool
 	telemetryActive atomic.Bool
+	hasVP8Track     atomic.Bool
 	ackMu           sync.Mutex
 	ackWaiters      map[string]chan struct{}
 	onEnded         func(string)
