@@ -51,7 +51,7 @@ type VP8Sender struct {
 func NewVP8Sender(track *webrtc.TrackLocalStaticSample, fps int) *VP8Sender {
 	return &VP8Sender{
 		track:     track,
-		sendQueue: make(chan []byte, 256),
+		sendQueue: make(chan []byte, 4096),
 		fps:       fps,
 	}
 }
@@ -71,6 +71,10 @@ func (s *VP8Sender) SendData(data []byte) {
 }
 
 // Run sends data and keepalive frames. Blocks until sessionClose or peerClose.
+// maxBurstFrames limits how many data frames we send in one burst
+// before yielding to keepalive. Prevents starving the SFU heartbeat.
+const maxBurstFrames = 50
+
 func (s *VP8Sender) Run(sessionClose, peerClose <-chan struct{}) {
 	interval := time.Second / time.Duration(s.fps)
 	ticker := time.NewTicker(interval)
@@ -83,19 +87,20 @@ func (s *VP8Sender) Run(sessionClose, peerClose <-chan struct{}) {
 		case <-peerClose:
 			return
 		case data := <-s.sendQueue:
-			s.frameCount++
-			frame := buildDataFrame(data)
-			err := s.track.WriteSample(media.Sample{Data: frame, Duration: interval})
-			if err != nil {
-				log.Printf("[VP8TX] WriteSample DATA error frame=%d: %v", s.frameCount, err)
-			} else if s.frameCount <= 10 || s.frameCount%200 == 0 {
-				log.Printf("[VP8TX] DATA frame=%d size=%d dataLen=%d", s.frameCount, len(frame), len(data))
+			// Send first frame
+			s.sendDataFrame(data, interval)
+
+			// Drain loop: send up to maxBurstFrames without waiting
+			for i := 0; i < maxBurstFrames; i++ {
+				select {
+				case more := <-s.sendQueue:
+					s.sendDataFrame(more, interval)
+				default:
+					goto drained
+				}
 			}
-			// Periodic keyframe to keep SFU happy
-			if s.frameCount%60 == 0 {
-				s.frameCount++
-				s.track.WriteSample(media.Sample{Data: vp8Keyframe, Duration: interval})
-			}
+		drained:
+			// After burst, reset ticker for next keepalive
 			ticker.Reset(interval)
 
 		case <-ticker.C:
@@ -112,6 +117,22 @@ func (s *VP8Sender) Run(sessionClose, peerClose <-chan struct{}) {
 				log.Printf("[VP8TX] keepalive frame=%d first=0x%02x err=%v", s.frameCount, frame[0], err)
 			}
 		}
+	}
+}
+
+func (s *VP8Sender) sendDataFrame(data []byte, interval time.Duration) {
+	s.frameCount++
+	frame := buildDataFrame(data)
+	err := s.track.WriteSample(media.Sample{Data: frame, Duration: interval})
+	if err != nil {
+		log.Printf("[VP8TX] WriteSample DATA error frame=%d: %v", s.frameCount, err)
+	} else if s.frameCount <= 10 || s.frameCount%500 == 0 {
+		log.Printf("[VP8TX] DATA frame=%d size=%d dataLen=%d queueLen=%d", s.frameCount, len(frame), len(data), len(s.sendQueue))
+	}
+	// Periodic keyframe to keep SFU happy
+	if s.frameCount%60 == 0 {
+		s.frameCount++
+		s.track.WriteSample(media.Sample{Data: vp8Keyframe, Duration: interval})
 	}
 }
 
