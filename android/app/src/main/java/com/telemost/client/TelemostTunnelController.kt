@@ -212,7 +212,7 @@ class TelemostTunnelController(private val appContext: Context) {
         }
         diagnosticsJob?.cancel()
         _diagnostics.value = "Diagnostics running"
-        appendLog("Diagnostics rerun requested")
+        appendLog("Diagnostics requested")
         diagnosticsJob = scope.launch {
             runCatching { DiagnosticsRunner.runAll("127.0.0.1", DEFAULT_SOCKS_PORT) }
                 .onSuccess {
@@ -240,6 +240,44 @@ class TelemostTunnelController(private val appContext: Context) {
         val clipboard = appContext.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         clipboard.setPrimaryClip(ClipData.newPlainText("telemost-log", _logs.value))
         appendLog("Log copied to clipboard")
+    }
+
+    fun sendLogToDisk() {
+        val token = getOAuthToken()
+        if (token.isBlank()) {
+            appendLog("Cannot send log: OAuth token missing")
+            return
+        }
+        scope.launch {
+            try {
+                val logContent = _logs.value
+                val timestamp = java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US).format(java.util.Date())
+                val filename = "olcrtc-android-log-$timestamp.txt"
+                appendLog("Uploading log to Yandex Disk ($filename)...")
+                
+                val urlConn = java.net.URL("https://cloud-api.yandex.net/v1/disk/resources/upload?path=app%3A%2Folcrtc%2F$filename&overwrite=true")
+                    .openConnection() as java.net.HttpURLConnection
+                urlConn.setRequestProperty("Authorization", "OAuth $token")
+                val uploadUrl = org.json.JSONObject(urlConn.inputStream.bufferedReader().readText()).getString("href")
+                urlConn.disconnect()
+                
+                val putConn = java.net.URL(uploadUrl).openConnection() as java.net.HttpURLConnection
+                putConn.requestMethod = "PUT"
+                putConn.setRequestProperty("Content-Type", "text/plain")
+                putConn.doOutput = true
+                putConn.outputStream.write(logContent.toByteArray())
+                val code = putConn.responseCode
+                putConn.disconnect()
+                
+                if (code in 200..201) {
+                    appendLog("Log uploaded: $filename")
+                } else {
+                    appendLog("Log upload failed: HTTP $code")
+                }
+            } catch (t: Throwable) {
+                appendLog("Log upload error: ${t.message}")
+            }
+        }
     }
 
     private fun launchTunnel(roomId: String) {
@@ -273,6 +311,24 @@ class TelemostTunnelController(private val appContext: Context) {
                 _diagnostics.value = "Diagnostics available (manual start recommended)"
                 val port = getSocksPort()
                 appendLog("Tunnel ready on local SOCKS port $port")
+                // Detect external IP through the tunnel
+                scope.launch {
+                    try {
+                        val proxy = java.net.Proxy(java.net.Proxy.Type.SOCKS, java.net.InetSocketAddress("127.0.0.1", port))
+                        val conn = java.net.URL("https://ifconfig.me/all.json").openConnection(proxy) as java.net.HttpURLConnection
+                        conn.connectTimeout = 15000
+                        conn.readTimeout = 15000
+                        val json = conn.inputStream.bufferedReader().readText()
+                        conn.disconnect()
+                        val obj = org.json.JSONObject(json)
+                        val ip = obj.optString("ip_addr", "unknown")
+                        val country = obj.optString("country", "unknown")
+                        _status.value = "Connected — IP: $ip ($country)"
+                        appendLog("External IP: $ip ($country)")
+                    } catch (t: Throwable) {
+                        appendLog("IP detection: ${t.message}")
+                    }
+                }
                 scheduleReconnectWatchdog()
             } catch (t: Throwable) {
                 _status.value = "Error"
