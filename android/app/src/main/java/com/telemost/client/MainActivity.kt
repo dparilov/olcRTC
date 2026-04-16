@@ -124,33 +124,37 @@ private fun MainScreen(controller: TelemostTunnelController) {
             if (validationMsg.isNotBlank()) {
                 Text(validationMsg, color = MaterialTheme.colorScheme.error)
             }
+            // Settings auto-save on Launch/Publish — no separate Save button needed
+        }
+
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = {
-                if (masterSecret.isBlank()) {
-                    validationMsg = "Master secret is required"
-                    return@Button
-                }
-                if (masterSecret.length < 8) {
-                    validationMsg = "Master secret must be at least 8 characters"
-                    return@Button
-                }
-                validationMsg = "Settings saved"
+                // Auto-save settings before launch
+                if (masterSecret.isBlank()) { validationMsg = "Master secret is required"; return@Button }
+                if (masterSecret.length < 8) { validationMsg = "Min 8 characters"; return@Button }
                 socksPort.toIntOrNull()?.let { controller.setSocksPort(it) }
                 controller.setOAuthToken(oauthToken)
                 controller.setMasterSecret(masterSecret)
                 if (roomUrl.isNotBlank()) controller.setRoomUrl(roomUrl)
+                validationMsg = ""
+                controller.launchFromClipboard()
             }) {
-                Text("Save Settings")
-            }
-        }
-
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = { controller.launchFromClipboard() }) {
                 Text("Launch tunnel")
             }
             Button(onClick = { controller.stopTunnel() }) {
                 Text("Stop")
             }
-            Button(onClick = { controller.publishRoomToDisk() }) {
+            Button(onClick = {
+                // Auto-save settings before publish
+                if (masterSecret.isBlank()) { validationMsg = "Master secret is required"; return@Button }
+                if (masterSecret.length < 8) { validationMsg = "Min 8 characters"; return@Button }
+                socksPort.toIntOrNull()?.let { controller.setSocksPort(it) }
+                controller.setOAuthToken(oauthToken)
+                controller.setMasterSecret(masterSecret)
+                if (roomUrl.isNotBlank()) controller.setRoomUrl(roomUrl)
+                validationMsg = ""
+                controller.publishRoomToDisk()
+            }) {
                 Text("Publish")
             }
         }
