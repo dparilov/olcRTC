@@ -186,6 +186,10 @@ class TelemostTunnelController(private val appContext: Context) {
     }
 
     fun stopTunnel() {
+        // Stop foreground service
+        try {
+            appContext.stopService(Intent(appContext, TunnelForegroundService::class.java))
+        } catch (_: Exception) {}
         diagnosticsJob?.cancel()
         scope.launch {
             try {
@@ -256,6 +260,14 @@ class TelemostTunnelController(private val appContext: Context) {
                 Mobile.start(roomId, keyHex, socksPort.toLong(), false, "", "")
                 _status.value = "Connecting to Telemost"
                 appendLog("Mobile.start completed, waiting ready")
+                // Start foreground service to keep connection alive
+                val serviceIntent = Intent(appContext, TunnelForegroundService::class.java)
+                serviceIntent.putExtra("status", "Tunnel active: room $roomId")
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                    appContext.startForegroundService(serviceIntent)
+                } else {
+                    appContext.startService(serviceIntent)
+                }
                 Mobile.waitReady(READY_TIMEOUT_MS)
                 _status.value = "SOCKS ready"
                 _diagnostics.value = "Diagnostics available (manual start recommended)"
