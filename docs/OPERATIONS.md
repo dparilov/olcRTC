@@ -20,68 +20,79 @@
 | `rotate-secret` | Validate master secret rotation (new + previous) |
 | `rotate-token` | Validate new OAuth token (test Disk read access) |
 
-## Server Initial Deploy
+## Automated Deploy Scripts
 
-1. Copy binary to server and make executable
-2. Create secrets file (root-only, 0600) with OLCRTC_MASTER_SECRET and OLCRTC_OAUTH_TOKEN
-3. Run health check: `source secrets && ./olcrtc -mode check`
-4. Start server: `./olcrtc -mode srv --discover -debug`
-5. Verify: log shows WATCH-SRV polling, no secrets in ps aux
+All server operations are automated via scripts in `script/`. The operator does not need to SSH into the VPS manually. Scripts receive secrets via environment variables — secrets never appear in argv, local files, or script source.
 
-## Client Setup
+### Fresh Deploy or Upgrade
 
-1. Export OLCRTC_MASTER_SECRET (required) and OLCRTC_OAUTH_TOKEN (for publishing clients)
-2. Run health check: `./olcrtc -mode check`
-3. Run with room ID: `./olcrtc -mode cnc -id ROOM_ID -socks-port 18090`
-4. Or discover mode: `./olcrtc -mode cnc --discover -socks-port 18090`
+```bash
+OLCRTC_MASTER_SECRET=<secret> \
+OLCRTC_OAUTH_TOKEN=<token> \
+./script/deploy-server.sh <VPS_HOST>
+```
 
-## Health Check
+What it does:
+1. Builds linux/amd64 binary (or uses provided path)
+2. Uploads to VPS via SCP
+3. Writes secrets file (0600, root-only)
+4. Runs `-mode check` (health check)
+5. Starts server in discover mode
+6. Verifies process is running
 
-Validates all secrets and connectivity without starting a tunnel:
+### Rotate Master Secret
+
+```bash
+OLCRTC_MASTER_SECRET=<new> \
+OLCRTC_PREVIOUS_SECRET=<old> \
+OLCRTC_OAUTH_TOKEN=<token> \
+./script/rotate-secret-server.sh <VPS_HOST>
+```
+
+What it does:
+1. Local validation: `rotate-secret` mode checks both secrets
+2. Updates secrets file on VPS with rotation window
+3. Restarts server — accepts records signed with current OR previous
+4. Verifies server is running
+
+After all clients migrated to new secret:
+```bash
+OLCRTC_MASTER_SECRET=<new> \
+OLCRTC_OAUTH_TOKEN=<token> \
+./script/deploy-server.sh <VPS_HOST>
+```
+This closes the rotation window (no OLCRTC_PREVIOUS_SECRET).
+
+### Replace OAuth Token
+
+```bash
+OLCRTC_MASTER_SECRET=<secret> \
+OLCRTC_OAUTH_TOKEN=<new-token> \
+./script/rotate-token-server.sh <VPS_HOST>
+```
+
+What it does:
+1. Local validation: `rotate-token` mode tests Disk access
+2. Updates secrets file on VPS
+3. Restarts server with new token
+4. Verifies server is running
+
+After confirming: revoke old token from Yandex ID.
+
+## Manual Operations (Alternative)
+
+### Health Check
 
 ```bash
 OLCRTC_MASTER_SECRET=... OLCRTC_OAUTH_TOKEN=... ./olcrtc -mode check
 ```
 
-Output confirms: secret loaded, Disk access, key derivation, sign/verify cycle.
+### Client Setup
 
-## Rotate Master Secret
-
-### Validation (before applying)
-
-```bash
-OLCRTC_MASTER_SECRET=<new> OLCRTC_PREVIOUS_SECRET=<old> ./olcrtc -mode rotate-secret
-```
-
-Validates: both secrets loaded, key derivation differs, sign/verify with both, multi-verify works.
-
-### Procedure
-
-1. Generate new secret
-2. Validate: `OLCRTC_MASTER_SECRET=new OLCRTC_PREVIOUS_SECRET=old ./olcrtc -mode rotate-secret`
-3. Update all clients with new OLCRTC_MASTER_SECRET
-4. On server: set OLCRTC_MASTER_SECRET=new, OLCRTC_PREVIOUS_SECRET=old, restart
-5. Server accepts records signed with either secret during rotation window
-6. After all clients migrated: remove OLCRTC_PREVIOUS_SECRET, restart
-7. Verify: `./olcrtc -mode check`
-
-## Replace OAuth Token
-
-### Validation (before applying)
-
-```bash
-OLCRTC_MASTER_SECRET=... OLCRTC_OAUTH_TOKEN=<new-token> ./olcrtc -mode rotate-token
-```
-
-Validates: token loaded, Disk read access confirmed, published record signature (if available).
-
-### Procedure
-
-1. Get new token from Yandex ID
-2. Validate: `OLCRTC_OAUTH_TOKEN=<new> ./olcrtc -mode rotate-token`
-3. Update secrets file with new token
-4. Restart server/client
-5. Revoke old token from Yandex ID
+1. Export OLCRTC_MASTER_SECRET (required) and OLCRTC_OAUTH_TOKEN (for publishing clients)
+2. Run health check: `./olcrtc -mode check`
+3. Run with room ID: `./olcrtc -mode cnc -id ROOM_ID -socks-port 18090`
+4. Or discover mode: `./olcrtc -mode cnc --discover -socks-port 18090`
 
 ## Room Record Format (v2)
 
@@ -90,15 +101,19 @@ Fields: room_id, room_url, created_at, expires_at, version(2), key_version, reco
 - sig = HMAC-SHA256(master_secret, canonical_json_without_sig)
 - key_version tracks which secret signed it
 - record_id = random nonce for replay prevention
-- Legacy v1 unsigned records are rejected
+- Legacy v1 unsigned records are rejected by server
 
 ## Security Checklist
 
-- Secrets file chmod 600
-- No secrets in ps aux
-- No secrets in logs
-- No secrets in config.json or repo
-- Room records signed (version=2)
+- Secrets file chmod 600 (root-only on server)
+- No secrets in ps aux (env vars, not argv)
+- No secrets in logs (redacted)
+- No secrets in config.json (json:"-" tags)
+- No secrets in repo, docs, or build artifacts
+- Room records signed (version=2, HMAC-SHA256)
 - Server verifies signatures before connecting
 - CLI flags removed, env-only secret loading
-- Health check (`-mode check`) validates configuration without exposing secrets
+- Health check (`-mode check`) validates without exposing secrets
+- Windows: DPAPI-encrypted secret storage
+- Android: EncryptedSharedPreferences (AES256-GCM, Keystore-backed)
+- Deploy scripts: secrets via env, never in argv or source
