@@ -190,6 +190,8 @@ class TelemostTunnelController(private val appContext: Context) {
         try {
             appContext.stopService(Intent(appContext, TunnelForegroundService::class.java))
         } catch (_: Exception) {}
+        // Auto-upload log to Disk on stop
+        sendLogToDisk()
         diagnosticsJob?.cancel()
         scope.launch {
             try {
@@ -240,6 +242,10 @@ class TelemostTunnelController(private val appContext: Context) {
         val clipboard = appContext.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         clipboard.setPrimaryClip(ClipData.newPlainText("telemost-log", _logs.value))
         appendLog("Log copied to clipboard")
+    }
+
+    fun clearLog() {
+        _logs.value = "Log cleared\n"
     }
 
     fun sendLogToDisk() {

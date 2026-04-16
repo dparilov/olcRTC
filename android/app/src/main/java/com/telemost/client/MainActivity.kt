@@ -154,8 +154,8 @@ private fun MainScreen(controller: TelemostTunnelController) {
             Button(onClick = { controller.rerunDiagnostics() }) {
                 Text("Run Diagnostics")
             }
-            Button(onClick = { controller.sendLogToDisk() }) {
-                Text("Send Log")
+            Button(onClick = { controller.clearLog() }) {
+                Text("Clear Log")
             }
         }
 
