@@ -24,6 +24,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 
 class MainActivity : ComponentActivity() {
@@ -66,23 +67,43 @@ private fun MainScreen(controller: TelemostTunnelController) {
         Text("Diagnostics: $diagnostics")
         Text(OlcRtcProbe.probe())
 
-        // Settings section
-        var keyHex by remember { mutableStateOf(controller.getKeyHex()) }
+        // Settings section — auto-show on first install if no master secret
         var socksPort by remember { mutableStateOf(controller.getSocksPort().toString()) }
-        var showSettings by remember { mutableStateOf(false) }
+        var oauthToken by remember { mutableStateOf(controller.getOAuthToken()) }
+        var masterSecret by remember { mutableStateOf(controller.getMasterSecret()) }
+        var showSettings by remember { mutableStateOf(controller.getMasterSecret().isBlank()) }
+        var validationMsg by remember { mutableStateOf("") }
+
+        // Secret status
+        Text(
+            if (masterSecret.isNotBlank()) "\u2713 Master secret configured"
+            else "\u26A0 Master secret required — open Settings",
+            style = MaterialTheme.typography.bodySmall
+        )
 
         Button(onClick = { showSettings = !showSettings }) {
             Text(if (showSettings) "Hide Settings" else "Settings")
         }
 
         if (showSettings) {
+            Text("Security", style = MaterialTheme.typography.titleSmall)
             OutlinedTextField(
-                value = keyHex,
-                onValueChange = { keyHex = it },
-                label = { Text("Encryption Key (hex)") },
+                value = masterSecret,
+                onValueChange = { masterSecret = it; validationMsg = "" },
+                label = { Text("Master Secret (required)") },
                 modifier = Modifier.fillMaxWidth(),
-                singleLine = true
+                singleLine = true,
+                visualTransformation = PasswordVisualTransformation()
             )
+            OutlinedTextField(
+                value = oauthToken,
+                onValueChange = { oauthToken = it },
+                label = { Text("OAuth Token (optional, for publishing)") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                visualTransformation = PasswordVisualTransformation()
+            )
+            Text("Connection", style = MaterialTheme.typography.titleSmall)
             OutlinedTextField(
                 value = socksPort,
                 onValueChange = { socksPort = it },
@@ -90,26 +111,19 @@ private fun MainScreen(controller: TelemostTunnelController) {
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true
             )
-
-            var oauthToken by remember { mutableStateOf(controller.getOAuthToken()) }
-            var masterSecret by remember { mutableStateOf(controller.getMasterSecret()) }
-
-            OutlinedTextField(
-                value = oauthToken,
-                onValueChange = { oauthToken = it },
-                label = { Text("OAuth Token (Yandex Disk)") },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true
-            )
-            OutlinedTextField(
-                value = masterSecret,
-                onValueChange = { masterSecret = it },
-                label = { Text("Master Secret") },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true
-            )
+            if (validationMsg.isNotBlank()) {
+                Text(validationMsg, color = MaterialTheme.colorScheme.error)
+            }
             Button(onClick = {
-                controller.setKeyHex(keyHex)
+                if (masterSecret.isBlank()) {
+                    validationMsg = "Master secret is required"
+                    return@Button
+                }
+                if (masterSecret.length < 8) {
+                    validationMsg = "Master secret must be at least 8 characters"
+                    return@Button
+                }
+                validationMsg = "Settings saved"
                 socksPort.toIntOrNull()?.let { controller.setSocksPort(it) }
                 controller.setOAuthToken(oauthToken)
                 controller.setMasterSecret(masterSecret)
