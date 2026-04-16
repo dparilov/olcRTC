@@ -283,32 +283,64 @@ func runDiscoverClient(ctx context.Context, cfg config) error {
 		return fmt.Errorf("--master-secret required for --discover mode")
 	}
 
-	log.Printf("[DISCOVER] Fetching room from Yandex Disk...")
+	// Retry loop: on conference end, re-fetch room from Disk and reconnect
+	for attempt := 1; ; attempt++ {
+		log.Printf("[DISCOVER] Attempt %d: fetching room from Yandex Disk...", attempt)
 
-	record, err := rendezvous.FetchRoom(cfg.oauthToken)
-	if err != nil {
-		return fmt.Errorf("fetch room from Yandex Disk: %w", err)
-	}
-	if record == nil {
-		return fmt.Errorf("no active room published on Yandex Disk")
-	}
-	if rendezvous.IsExpired(record) {
-		log.Printf("[DISCOVER] Warning: room %s is expired (expires_at=%s)", record.RoomID, record.ExpiresAt)
-	}
+		record, err := rendezvous.FetchRoom(cfg.oauthToken)
+		if err != nil {
+			log.Printf("[DISCOVER] Fetch error: %v, retrying in 10s...", err)
+			select {
+			case <-time.After(10 * time.Second):
+				continue
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+		if record == nil {
+			log.Printf("[DISCOVER] No room published yet, retrying in 10s...")
+			select {
+			case <-time.After(10 * time.Second):
+				continue
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+		if rendezvous.IsExpired(record) {
+			log.Printf("[DISCOVER] Room %s expired, retrying in 10s...", record.RoomID)
+			select {
+			case <-time.After(10 * time.Second):
+				continue
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
 
-	keyHex := rendezvous.DeriveKey(cfg.masterSecret, record.RoomID)
-	log.Printf("[DISCOVER] Room: %s, key derived from master secret", record.RoomURL)
+		keyHex := rendezvous.DeriveKey(cfg.masterSecret, record.RoomID)
+		log.Printf("[DISCOVER] Room: %s, connecting...", record.RoomURL)
 
-	return client.Run(
-		ctx,
-		record.RoomURL,
-		keyHex,
-		cfg.socksPort,
-		cfg.duo,
-		cfg.socksHost,
-		"",
-		"",
-	)
+		err = client.Run(
+			ctx,
+			record.RoomURL,
+			keyHex,
+			cfg.socksPort,
+			cfg.duo,
+			cfg.socksHost,
+			"",
+			"",
+		)
+
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+
+		log.Printf("[DISCOVER] Connection ended: %v. Re-fetching room in 5s...", err)
+		select {
+		case <-time.After(5 * time.Second):
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 }
 
 func fetchRoomFromAPI(apiURL string) (string, string, error) {
