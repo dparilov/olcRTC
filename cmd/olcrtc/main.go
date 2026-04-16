@@ -452,22 +452,69 @@ func runWatchServer(ctx context.Context, cfg config) error {
 		keyHex := rendezvous.DeriveKey(secret, record.RoomID)
 		log.Printf("[WATCH-SRV] Verified room: %s (sig OK, key_version=%d)", record.RoomURL, record.KeyVersion)
 
-		err = server.Run(
-			ctx,
-			record.RoomURL,
-			keyHex,
-			cfg.duo,
-			cfg.dnsServer,
-			cfg.socksProxyAddr,
-			cfg.socksProxyPort,
-		)
+		// Run server in background goroutine — continue polling Disk for room changes
+		srvCtx, srvCancel := context.WithCancel(ctx)
+		srvDone := make(chan error, 1)
+		go func() {
+			srvDone <- server.Run(
+				srvCtx,
+				record.RoomURL,
+				keyHex,
+				cfg.duo,
+				cfg.dnsServer,
+				cfg.socksProxyAddr,
+				cfg.socksProxyPort,
+			)
+		}()
 
-		if ctx.Err() != nil {
-			return ctx.Err()
+		// Parallel poll: check Disk every 10s while server is running
+		for {
+			select {
+			case srvErr := <-srvDone:
+				log.Printf("[WATCH-SRV] Room ended: %v. Polling for new room in 5s...", srvErr)
+				lastRoomID = "" // allow reconnect to same room if client re-publishes
+				goto nextPoll
+			case <-ctx.Done():
+				srvCancel()
+				return ctx.Err()
+			case <-time.After(10 * time.Second):
+				// Check if room changed on Disk
+				newRecord, newMatched, pollErr := rendezvous.FetchAndVerifyRoom(cfg.oauthToken, cfg.masterSecret, previousSecret)
+				if pollErr != nil || newRecord == nil {
+					continue // keep current room
+				}
+				if newRecord.RoomID != lastRoomID {
+					log.Printf("[WATCH-SRV] New room detected: %s (was %s) — switching!", newRecord.RoomID, lastRoomID)
+					srvCancel() // graceful disconnect from old room
+					<-srvDone  // wait for server to stop
+
+					// Update for next iteration
+					newSecret := cfg.masterSecret
+					if newMatched == 2 {
+						newSecret = previousSecret
+					}
+					lastRoomID = newRecord.RoomID
+					keyHex = rendezvous.DeriveKey(newSecret, newRecord.RoomID)
+					log.Printf("[WATCH-SRV] Verified room: %s (sig OK)", newRecord.RoomURL)
+
+					// Start new server
+					srvCtx, srvCancel = context.WithCancel(ctx)
+					srvDone = make(chan error, 1)
+					go func() {
+						srvDone <- server.Run(
+							srvCtx,
+							newRecord.RoomURL,
+							keyHex,
+							cfg.duo,
+							cfg.dnsServer,
+							cfg.socksProxyAddr,
+							cfg.socksProxyPort,
+						)
+					}()
+				}
+			}
 		}
-
-		log.Printf("[WATCH-SRV] Room ended: %v. Polling for new room in 10s...", err)
-		lastRoomID = "" // allow reconnect to same room if client re-publishes
+	nextPoll:
 		select {
 		case <-time.After(10 * time.Second):
 		case <-ctx.Done():
