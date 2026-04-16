@@ -134,6 +134,24 @@ func (p *Peer) handleSignaling() {
 			p.sendAck(uid)
 		}
 
+		// Handle upsertDescription — new participant joined the room.
+		// Re-send setSlots to get their VP8 track forwarded to us.
+		if _, ok := msg["upsertDescription"]; ok {
+			p.wsMu.Lock()
+			p.ws.WriteJSON(map[string]interface{}{
+				"uid": uuid.New().String(),
+				"setSlots": map[string]interface{}{
+					"slots":          []map[string]interface{}{{"width": 320, "height": 240}},
+					"audioSlotsCount": 1,
+					"key":            1,
+					"nLastConfig":    map[string]interface{}{"nCount": 1, "showInSubgrid": false},
+				},
+			})
+			p.wsMu.Unlock()
+			log.Println("[WS] setSlots re-sent on upsertDescription (new participant)")
+			p.sendAck(uid)
+		}
+
 		if _, ok := msg["vadActivity"]; ok {
 			p.sendAck(uid)
 		}
