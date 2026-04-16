@@ -84,6 +84,16 @@ func run() error {
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 
 	errCh := make(chan error, 1)
+	// Utility modes run synchronously and exit immediately
+	switch cfg.mode {
+	case "check":
+		return runCheck(cfg)
+	case "rotate-secret":
+		return runRotateSecret(cfg)
+	case "rotate-token":
+		return runRotateToken(cfg)
+	}
+
 	go runMode(ctx, cfg, errCh)
 
 	select {
@@ -143,6 +153,8 @@ func validateConfig(cfg config) error {
 	switch {
 	case cfg.provider != "telemost":
 		return errUnsupportedProvider
+	case cfg.mode == "check" || cfg.mode == "rotate-secret" || cfg.mode == "rotate-token":
+		return nil // operational modes don't need room ID
 	case cfg.roomID == "" && !cfg.autoRoom && cfg.apiURL == "" && !cfg.discover:
 		return errRoomIDRequired
 	case cfg.mode != "srv" && cfg.mode != "cnc":
@@ -503,6 +515,217 @@ func fetchRoomFromAPI(apiURL string) (string, string, error) {
 
 	// Key is NOT returned by API — must be derived from master secret
 	return info.RoomURL, "", nil
+}
+
+func runCheck(cfg config) error {
+	fmt.Println("=== olcRTC Configuration Check ===")
+	fmt.Println()
+
+	// Check master secret
+	if cfg.masterSecret == "" {
+		fmt.Println("[FAIL] OLCRTC_MASTER_SECRET: not set")
+		return fmt.Errorf("master secret not configured")
+	}
+	fmt.Println("[ OK ] OLCRTC_MASTER_SECRET: loaded")
+
+	// Check previous secret (optional)
+	previousSecret := os.Getenv("OLCRTC_PREVIOUS_SECRET")
+	if previousSecret != "" {
+		fmt.Println("[ OK ] OLCRTC_PREVIOUS_SECRET: loaded (rotation window active)")
+	} else {
+		fmt.Println("[INFO] OLCRTC_PREVIOUS_SECRET: not set (no rotation window)")
+	}
+
+	// Check OAuth token
+	if cfg.oauthToken == "" {
+		fmt.Println("[WARN] OLCRTC_OAUTH_TOKEN: not set (required for publish/discover)")
+	} else {
+		fmt.Println("[ OK ] OLCRTC_OAUTH_TOKEN: loaded")
+
+		// Test Disk read access
+		_, err := rendezvous.FetchRoom(cfg.oauthToken)
+		if err != nil {
+			fmt.Printf("[FAIL] Yandex Disk read test: %v\n", err)
+		} else {
+			fmt.Println("[ OK ] Yandex Disk: read access confirmed")
+		}
+	}
+
+	// Test key derivation
+	testKey := rendezvous.DeriveKey(cfg.masterSecret, "test-room-id")
+	if len(testKey) == 64 {
+		fmt.Println("[ OK ] Key derivation: HMAC-SHA256 working")
+	} else {
+		fmt.Println("[FAIL] Key derivation: unexpected output length")
+	}
+
+	// Test sign/verify cycle
+	testRecord := &rendezvous.RoomRecord{
+		RoomID:    "check-test",
+		RoomURL:   "https://example.com/test",
+		CreatedAt: time.Now().Format(time.RFC3339),
+		ExpiresAt: time.Now().Add(1 * time.Hour).Format(time.RFC3339),
+	}
+	if err := rendezvous.SignRecord(testRecord, cfg.masterSecret, 1); err != nil {
+		fmt.Printf("[FAIL] Record signing: %v\n", err)
+	} else if err := rendezvous.VerifyRecord(testRecord, cfg.masterSecret); err != nil {
+		fmt.Printf("[FAIL] Record verification: %v\n", err)
+	} else {
+		fmt.Println("[ OK ] Sign/verify cycle: working")
+	}
+
+	fmt.Println()
+	fmt.Println("=== Check complete ===")
+	return nil
+}
+
+func runRotateSecret(cfg config) error {
+	fmt.Println("=== Master Secret Rotation Validator ===")
+	fmt.Println()
+
+	newSecret := cfg.masterSecret
+	previousSecret := os.Getenv("OLCRTC_PREVIOUS_SECRET")
+
+	if newSecret == "" {
+		return fmt.Errorf("OLCRTC_MASTER_SECRET (new secret) is required")
+	}
+	if previousSecret == "" {
+		return fmt.Errorf("OLCRTC_PREVIOUS_SECRET (old secret) is required for rotation validation")
+	}
+	if newSecret == previousSecret {
+		return fmt.Errorf("new and previous secrets are identical — nothing to rotate")
+	}
+
+	fmt.Println("[ OK ] New secret (OLCRTC_MASTER_SECRET): loaded")
+	fmt.Println("[ OK ] Previous secret (OLCRTC_PREVIOUS_SECRET): loaded")
+	fmt.Println("[ OK ] Secrets are different")
+
+	// Test key derivation with both
+	testRoomID := "rotation-test-room"
+	newKey := rendezvous.DeriveKey(newSecret, testRoomID)
+	oldKey := rendezvous.DeriveKey(previousSecret, testRoomID)
+	if newKey == oldKey {
+		fmt.Println("[WARN] Derived keys are identical (secrets may be similar)")
+	} else {
+		fmt.Println("[ OK ] Derived keys differ between old and new secret")
+	}
+
+	// Sign with new secret, verify with new
+	record := &rendezvous.RoomRecord{
+		RoomID:    testRoomID,
+		RoomURL:   "https://example.com/rotation-test",
+		CreatedAt: time.Now().Format(time.RFC3339),
+		ExpiresAt: time.Now().Add(1 * time.Hour).Format(time.RFC3339),
+	}
+	if err := rendezvous.SignRecord(record, newSecret, 1); err != nil {
+		return fmt.Errorf("sign with new secret failed: %w", err)
+	}
+	fmt.Println("[ OK ] Record signed with new secret (key_version=1)")
+
+	if err := rendezvous.VerifyRecord(record, newSecret); err != nil {
+		return fmt.Errorf("verify with new secret failed: %w", err)
+	}
+	fmt.Println("[ OK ] Verified with new secret")
+
+	// Verify should fail with old secret
+	if err := rendezvous.VerifyRecord(record, previousSecret); err != nil {
+		fmt.Println("[ OK ] Correctly rejected by previous secret")
+	} else {
+		fmt.Println("[WARN] Old secret also verifies new-secret-signed record (unexpected)")
+	}
+
+	// Sign with old secret, verify multi should work
+	oldRecord := &rendezvous.RoomRecord{
+		RoomID:    testRoomID,
+		RoomURL:   "https://example.com/rotation-test-old",
+		CreatedAt: time.Now().Format(time.RFC3339),
+		ExpiresAt: time.Now().Add(1 * time.Hour).Format(time.RFC3339),
+	}
+	if err := rendezvous.SignRecord(oldRecord, previousSecret, 2); err != nil {
+		return fmt.Errorf("sign with old secret failed: %w", err)
+	}
+
+	matched, err := rendezvous.VerifyRecordMulti(oldRecord, newSecret, previousSecret)
+	if err != nil {
+		return fmt.Errorf("multi-verify failed: %w", err)
+	}
+	if matched == 2 {
+		fmt.Println("[ OK ] Old-secret-signed record verified via fallback (rotation window works)")
+	} else {
+		fmt.Printf("[WARN] Old-secret-signed record matched key %d (expected 2)\n", matched)
+	}
+
+	// Test Disk access if token available
+	if cfg.oauthToken != "" {
+		record, err := rendezvous.FetchRoom(cfg.oauthToken)
+		if err != nil {
+			fmt.Printf("[WARN] Disk fetch failed: %v\n", err)
+		} else if record != nil {
+			_, verifyErr := rendezvous.VerifyRecordMulti(record, newSecret, previousSecret)
+			if verifyErr != nil {
+				fmt.Printf("[WARN] Current Disk record does NOT verify against either secret: %v\n", verifyErr)
+			} else {
+				fmt.Println("[ OK ] Current Disk record verifies against known secrets")
+			}
+		} else {
+			fmt.Println("[INFO] No room currently published on Disk")
+		}
+	}
+
+	fmt.Println()
+	fmt.Println("=== Rotation validation passed ===")
+	fmt.Println()
+	fmt.Println("Next steps:")
+	fmt.Println("  1. Deploy with both OLCRTC_MASTER_SECRET (new) and OLCRTC_PREVIOUS_SECRET (old)")
+	fmt.Println("  2. Update all clients to use new OLCRTC_MASTER_SECRET")
+	fmt.Println("  3. After all clients migrated: remove OLCRTC_PREVIOUS_SECRET and restart")
+	return nil
+}
+
+func runRotateToken(cfg config) error {
+	fmt.Println("=== OAuth Token Rotation Validator ===")
+	fmt.Println()
+
+	if cfg.oauthToken == "" {
+		return fmt.Errorf("OLCRTC_OAUTH_TOKEN (new token) is required")
+	}
+
+	fmt.Println("[ OK ] OLCRTC_OAUTH_TOKEN: loaded")
+
+	// Test read access
+	fmt.Println("[....] Testing Yandex Disk read access...")
+	record, err := rendezvous.FetchRoom(cfg.oauthToken)
+	if err != nil {
+		return fmt.Errorf("Disk read test failed: %w (token may be invalid or expired)", err)
+	}
+
+	fmt.Println("[ OK ] Yandex Disk: read access confirmed")
+
+	if record != nil {
+		fmt.Printf("[ OK ] Current room on Disk: %s (expires %s)\n", record.RoomID, record.ExpiresAt)
+
+		// Verify signature if master secret available
+		if cfg.masterSecret != "" {
+			previousSecret := os.Getenv("OLCRTC_PREVIOUS_SECRET")
+			_, verifyErr := rendezvous.VerifyRecordMulti(record, cfg.masterSecret, previousSecret)
+			if verifyErr != nil {
+				fmt.Printf("[WARN] Room record signature: %v\n", verifyErr)
+			} else {
+				fmt.Println("[ OK ] Room record signature: valid")
+			}
+		}
+	} else {
+		fmt.Println("[INFO] No room currently published on Disk")
+	}
+
+	fmt.Println()
+	fmt.Println("=== Token validation passed ===")
+	fmt.Println()
+	fmt.Println("Next steps:")
+	fmt.Println("  1. Update secrets file with new OLCRTC_OAUTH_TOKEN")
+	fmt.Println("  2. Restart server/client")
+	fmt.Println("  3. Revoke old token from Yandex ID if no longer needed")
+	return nil
 }
 
 func waitForShutdown(errCh <-chan error) error {
