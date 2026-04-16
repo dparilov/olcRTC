@@ -117,6 +117,20 @@ func (p *Peer) handleSignaling() {
 		}
 
 		if _, ok := msg["updateDescription"]; ok {
+			// Re-request video slots when participants change — SFU needs
+			// a fresh setSlots to start forwarding a new peer's VP8 track.
+			p.wsMu.Lock()
+			p.ws.WriteJSON(map[string]interface{}{
+				"uid": uuid.New().String(),
+				"setSlots": map[string]interface{}{
+					"slots":          []map[string]interface{}{{"width": 320, "height": 240}},
+					"audioSlotsCount": 1,
+					"key":            1,
+					"nLastConfig":    map[string]interface{}{"nCount": 1, "showInSubgrid": false},
+				},
+			})
+			p.wsMu.Unlock()
+			log.Println("[WS] setSlots re-sent on updateDescription")
 			p.sendAck(uid)
 		}
 
