@@ -29,11 +29,18 @@ No Yandex 360 Business subscription needed. Uses Yandex Disk as passive rendezvo
 
 ```bash
 # Server (VPS, runs permanently):
-olcrtc -mode srv --discover --oauth-token TOKEN --master-secret SECRET
+export OLCRTC_OAUTH_TOKEN="<token>"
+export OLCRTC_MASTER_SECRET="<shared-secret>"
+olcrtc -mode srv --discover
 
 # Client (user device):
-olcrtc -mode cnc -id ROOM_ID --oauth-token TOKEN --master-secret SECRET
+export OLCRTC_OAUTH_TOKEN="<token>"
+export OLCRTC_MASTER_SECRET="<shared-secret>"
+olcrtc -mode cnc -id ROOM_ID
 ```
+
+> **Note:** Secrets are passed via environment variables, never via command-line
+> arguments. See `SECURITY.md` for the full secret handling model.
 
 ### Room Record Contract (app:/olcrtc/active-room.json)
 
@@ -106,12 +113,13 @@ Full support: server watch mode, client publish, auto-reconnect.
 
 ### Windows GUI (`ui/`)
 Fyne-based desktop app. Settings: OAuth token, master secret, conference ID.
-Launches olcrtc as subprocess with `--master-secret` and `--oauth-token` flags.
+Launches olcrtc as subprocess; secrets passed via environment variables.
 
 ### Android (`mobile/` + `android/`)
 Jetpack Compose UI. Settings: OAuth token, master secret.
 "Publish" button pushes room to Yandex Disk.
 Key derived via `DeriveKeyFromSecret()` gomobile binding.
+Secrets stored in memory only, not persisted to config files.
 
 ## Reconnect Strategy
 

@@ -64,11 +64,11 @@ We maintain a patched copy in `third_party/anet/` with linkname directives remov
 
 ## Android SDK/NDK
 
-### Current Setup
-- SDK: `/home/dima/.local/android-sdk/`
+### Requirements
+- SDK: Android SDK with platform tools
 - NDK: Auto-detected from SDK
-- JDK: 17 (Adoptium) at `~/tools/jdk-17.0.9+9/`
-- Emulator AVD: `telemost35` (API 35)
+- JDK: 17+ (e.g. Adoptium `jdk-17.x`)
+- Emulator: API 35 recommended
 - Min API: 21
 
 ### What to Watch For
@@ -85,18 +85,3 @@ We maintain a patched copy in `third_party/anet/` with linkname directives remov
 | `script/build-windows-client.sh` | Windows cross-compilation |
 | `script/ui.sh` | UI launcher |
 | `script/linux-testbed.sh` | Linux transport test harness |
-
-## Server Infrastructure
-
-| Resource | Details |
-|----------|---------|
-| VPS | 46.161.15.138 (Ubuntu) |
-| Binary path | /opt/olcrtc-new |
-| Log path | /opt/srv.log |
-| Room API | Yandex Telemost (Dima's account) |
-
-## Future: Server-Managed Room
-
-Planned architecture: Server creates and maintains Telemost room with periodic renewal.
-Client retrieves room ID via API endpoint (not buffer/name encoding).
-Room management will use Dima's Yandex account credentials.

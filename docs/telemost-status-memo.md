@@ -12,7 +12,7 @@ client -> Telemost/WebRTC/DataChannel -> VPS -> Internet
 - DataChannel opens successfully
 - Local SOCKS5 listener starts successfully
 - HTTPS traffic passes through the tunnel
-- Client egress IP becomes the VPS IP: `46.161.15.138`
+- Client egress IP becomes the VPS IP (confirming tunnel is active)
 - Multiple HTTPS sites were successfully accessed through the tunnel
 - Small download test succeeded
 - Parallel connection test succeeded on the baseline set
