@@ -172,7 +172,9 @@ func loadNames(dataDir string) error {
 func runMode(ctx context.Context, cfg config, errCh chan<- error) {
 	switch cfg.mode {
 	case "srv":
-		if cfg.autoRoom {
+		if cfg.discover {
+			errCh <- runWatchServer(ctx, cfg)
+		} else if cfg.autoRoom {
 			errCh <- runAutoRoomServer(ctx, cfg)
 		} else {
 			roomURL := "https://telemost.yandex.ru/j/" + cfg.roomID
@@ -193,10 +195,22 @@ func runMode(ctx context.Context, cfg config, errCh chan<- error) {
 			errCh <- runAPIClient(ctx, cfg)
 		} else {
 			roomURL := "https://telemost.yandex.ru/j/" + cfg.roomID
+
+			// If --oauth-token and --master-secret provided, publish room to Disk
+			if cfg.oauthToken != "" && cfg.masterSecret != "" {
+				publishRoomToDisk(cfg.oauthToken, cfg.masterSecret, cfg.roomID, roomURL, cfg.rotateHours)
+			}
+
+			keyHex := cfg.keyHex
+			if keyHex == "" && cfg.masterSecret != "" {
+				keyHex = rendezvous.DeriveKey(cfg.masterSecret, cfg.roomID)
+				log.Printf("[CLIENT] Key derived from master secret")
+			}
+
 			errCh <- client.Run(
 				ctx,
 				roomURL,
-				cfg.keyHex,
+				keyHex,
 				cfg.socksPort,
 				cfg.duo,
 				cfg.socksHost,
@@ -340,6 +354,92 @@ func runDiscoverClient(ctx context.Context, cfg config) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		}
+	}
+}
+
+func runWatchServer(ctx context.Context, cfg config) error {
+	if cfg.oauthToken == "" {
+		return fmt.Errorf("--oauth-token required for --discover server mode")
+	}
+	if cfg.masterSecret == "" {
+		return fmt.Errorf("--master-secret required for --discover server mode")
+	}
+
+	var lastRoomID string
+
+	for {
+		log.Println("[WATCH-SRV] Polling Yandex Disk for room...")
+
+		record, err := rendezvous.FetchRoom(cfg.oauthToken)
+		if err != nil {
+			log.Printf("[WATCH-SRV] Fetch error: %v, retrying in 30s...", err)
+			select {
+			case <-time.After(30 * time.Second):
+				continue
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+		if record == nil || rendezvous.IsExpired(record) {
+			log.Println("[WATCH-SRV] No active room yet, polling in 30s...")
+			select {
+			case <-time.After(30 * time.Second):
+				continue
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+
+		// Skip if same room already connected
+		if record.RoomID == lastRoomID {
+			select {
+			case <-time.After(30 * time.Second):
+				continue
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+
+		lastRoomID = record.RoomID
+		keyHex := rendezvous.DeriveKey(cfg.masterSecret, record.RoomID)
+		log.Printf("[WATCH-SRV] New room found: %s, connecting...", record.RoomURL)
+
+		err = server.Run(
+			ctx,
+			record.RoomURL,
+			keyHex,
+			cfg.duo,
+			cfg.dnsServer,
+			cfg.socksProxyAddr,
+			cfg.socksProxyPort,
+		)
+
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+
+		log.Printf("[WATCH-SRV] Room ended: %v. Polling for new room in 10s...", err)
+		lastRoomID = "" // allow reconnect to same room if client re-publishes
+		select {
+		case <-time.After(10 * time.Second):
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+}
+
+func publishRoomToDisk(oauthToken, masterSecret, roomID, roomURL string, rotateHours int) {
+	record := &rendezvous.RoomRecord{
+		RoomID:    roomID,
+		RoomURL:   roomURL,
+		CreatedAt: time.Now().Format(time.RFC3339),
+		ExpiresAt: time.Now().Add(time.Duration(rotateHours) * time.Hour).Format(time.RFC3339),
+		Version:   1,
+	}
+	if err := rendezvous.PublishRoom(oauthToken, record); err != nil {
+		log.Printf("[CLIENT] Failed to publish room to Yandex Disk: %v", err)
+	} else {
+		log.Printf("[CLIENT] Room %s published to Yandex Disk (expires in %dh)", roomID, rotateHours)
 	}
 }
 
