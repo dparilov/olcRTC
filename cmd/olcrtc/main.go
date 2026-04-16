@@ -115,7 +115,11 @@ func parseFlags() config {
 	flag.IntVar(&cfg.socksPort, "socks-port", 1080, "SOCKS5 port (client only)")
 	flag.StringVar(&cfg.socksHost, "socks-host", "127.0.0.1", "SOCKS5 listen host (client only)")
 	// NOTE: -key flag removed for security (secrets must use env vars only)
-	// cfg.keyHex is set from OLCRTC_KEY env var below
+	// OLCRTC_KEY is a direct room key override for two valid scenarios:
+	//   1. Local development/debugging without a full master-secret setup
+	//   2. Interop testing with external tools that provide pre-derived keys
+	// This is NOT a publishing path — room records are always signed via master secret.
+	// In production, use OLCRTC_MASTER_SECRET instead (key is derived automatically).
 	flag.BoolVar(&cfg.debug, "debug", false, "Enable verbose logging")
 	flag.StringVar(&cfg.dataDir, "data", "data", "Path to data directory")
 	flag.BoolVar(&cfg.duo, "duo", false, "Use dual channels for 2x throughput")
