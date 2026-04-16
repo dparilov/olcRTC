@@ -11,7 +11,12 @@ import (
 	"github.com/openlibrecommunity/olcrtc/internal/protect"
 )
 
-const apiBase = "https://cloud-api.yandex.ru/telemost_front/v2/telemost"
+const (
+	// Frontend API (used for joining rooms without auth)
+	frontendAPI = "https://cloud-api.yandex.ru/telemost_front/v2/telemost"
+	// Official Yandex 360 API (used for creating rooms with OAuth)
+	officialAPI = "https://cloud-api.yandex.net/v1/telemost-api"
+)
 
 // ConferenceInfo holds the result of creating a new Telemost conference.
 type ConferenceInfo struct {
@@ -24,7 +29,7 @@ type ConferenceInfo struct {
 // CreateConference creates a new Telemost room using an OAuth token.
 // The token must have telemost:write scope (Yandex ID OAuth).
 func CreateConference(oauthToken string) (*ConferenceInfo, error) {
-	req, err := http.NewRequest("POST", apiBase+"/conferences", nil)
+	req, err := http.NewRequest("POST", officialAPI+"/conferences", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -89,7 +94,7 @@ type ConnectionInfo struct {
 }
 
 func GetConnectionInfo(roomURL, displayName string) (*ConnectionInfo, error) {
-	u := fmt.Sprintf("%s/conferences/%s/connection", apiBase, url.QueryEscape(roomURL))
+	u := fmt.Sprintf("%s/conferences/%s/connection", frontendAPI, url.QueryEscape(roomURL))
 
 	req, err := http.NewRequest("GET", u, nil)
 	if err != nil {
