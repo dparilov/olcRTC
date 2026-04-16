@@ -100,22 +100,42 @@ func (p *Program) loadConfig() *Config {
 		return cfg
 	}
 
-	// Migrate legacy secrets: load into memory, then rewrite config without them
+	// Load secrets from platform-native secure storage (DPAPI on Windows, file on Linux)
+	storedSecret, storedToken, secErr := loadSecrets()
+	if secErr != nil {
+		log("WARNING: Could not load from secure storage: %v", secErr)
+	} else {
+		if storedSecret != "" {
+			cfg.MasterSecret = storedSecret
+			log("Master secret loaded from secure storage (%s)", secretStorageType())
+		}
+		if storedToken != "" {
+			cfg.OAuthToken = storedToken
+			log("OAuth token loaded from secure storage (%s)", secretStorageType())
+		}
+	}
+
+	// Migrate legacy secrets from config file to secure storage
 	migrated := false
 	if legacy.EncryptionKey != "" {
 		cfg.EncryptionKey = legacy.EncryptionKey
 		migrated = true
 	}
-	if legacy.OAuthToken != "" {
+	if legacy.OAuthToken != "" && cfg.OAuthToken == "" {
 		cfg.OAuthToken = legacy.OAuthToken
 		migrated = true
 	}
-	if legacy.MasterSecret != "" {
+	if legacy.MasterSecret != "" && cfg.MasterSecret == "" {
 		cfg.MasterSecret = legacy.MasterSecret
 		migrated = true
 	}
 	if migrated {
-		log("SECURITY: Found secrets in config file - migrating to memory-only, rewriting clean config")
+		log("SECURITY: Found legacy secrets in config - migrating to secure storage")
+		if err := saveSecrets(cfg.MasterSecret, cfg.OAuthToken); err != nil {
+			log("WARNING: Could not migrate to secure storage: %v", err)
+		} else {
+			log("Legacy secrets migrated to secure storage (%s)", secretStorageType())
+		}
 		cleanData, mErr := json.MarshalIndent(cfg, "", "  ")
 		if mErr == nil {
 			if wErr := os.WriteFile(configPath, cleanData, 0600); wErr != nil {
@@ -180,4 +200,13 @@ func (p *Program) saveConfig(dns, encryptionKey, socksPort, conferenceID, oauthT
 	}
 
 	log("Configuration saved to: %s", configPath)
+
+	// Save secrets to platform-native secure storage
+	if masterSecret != "" || oauthToken != "" {
+		if err := saveSecrets(masterSecret, oauthToken); err != nil {
+			log("WARNING: Could not save secrets to secure storage: %v", err)
+		} else {
+			log("Secrets saved to secure storage (%s)", secretStorageType())
+		}
+	}
 }

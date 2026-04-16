@@ -110,6 +110,14 @@ func (p *Program) Run() {
 
 	go p.listenLogs()
 
+	// First-install: prompt for master secret if not configured
+	if p.Config.MasterSecret == "" {
+		log("SETUP: No master secret configured - opening settings for initial setup")
+		go func() {
+			p.settingsWindow()
+		}()
+	}
+
 	log("Window created and running...")
 	w.ShowAndRun()
 }

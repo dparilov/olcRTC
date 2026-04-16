@@ -13,15 +13,33 @@ import (
 func (p *Program) settingsWindow() {
 	log("Opening settings dialog...")
 
-	dns := widget.NewEntry()
-	dns.SetPlaceHolder("1.1.1.1")
-	if p.Config.DNS != "" {
-		dns.SetText(p.Config.DNS)
+	// --- Security Settings ---
+	masterSecret := widget.NewPasswordEntry()
+	masterSecret.SetPlaceHolder("Required - shared setup secret")
+	if p.Config.MasterSecret != "" {
+		masterSecret.SetText(p.Config.MasterSecret)
 	}
 
-	encrpKey := widget.NewEntry()
-	if p.Config.EncryptionKey != "" {
-		encrpKey.SetText(p.Config.EncryptionKey)
+	oauthToken := widget.NewPasswordEntry()
+	oauthToken.SetPlaceHolder("Optional - for publishing rooms to Yandex Disk")
+	if p.Config.OAuthToken != "" {
+		oauthToken.SetText(p.Config.OAuthToken)
+	}
+
+	secretStatus := widget.NewLabel("")
+	if p.Config.MasterSecret != "" {
+		secretStatus.SetText("Master secret: configured")
+	} else {
+		secretStatus.SetText("Master secret: NOT SET (required)")
+	}
+
+	storageInfo := widget.NewLabel("Storage: " + secretStorageType())
+
+	// --- Connection Settings ---
+	conferenceId := widget.NewEntry()
+	conferenceId.SetPlaceHolder("Room ID (numbers only)")
+	if p.Config.ConferenceID != "" {
+		conferenceId.SetText(p.Config.ConferenceID)
 	}
 
 	socksPort := widget.NewEntry()
@@ -30,40 +48,53 @@ func (p *Program) settingsWindow() {
 		socksPort.SetText(p.Config.SocksPort)
 	}
 
-	conferenceId := widget.NewEntry()
-	if p.Config.ConferenceID != "" {
-		conferenceId.SetText(p.Config.ConferenceID)
+	dns := widget.NewEntry()
+	dns.SetPlaceHolder("1.1.1.1")
+	if p.Config.DNS != "" {
+		dns.SetText(p.Config.DNS)
 	}
 
-	oauthToken := widget.NewEntry()
-	if p.Config.OAuthToken != "" {
-		oauthToken.SetText(p.Config.OAuthToken)
-	}
+	validationLabel := widget.NewLabel("")
 
-	masterSecret := widget.NewEntry()
-	if p.Config.MasterSecret != "" {
-		masterSecret.SetText(p.Config.MasterSecret)
-	}
-
-	applyBtn := widget.NewButtonWithIcon("Apply", theme.CheckButtonCheckedIcon(), func() {
+	applyBtn := widget.NewButtonWithIcon("Save & Apply", theme.CheckButtonCheckedIcon(), func() {
 		log("Applying settings...")
-		p.buildRunString(conferenceId.Text, encrpKey.Text, socksPort.Text, dns.Text, masterSecret.Text)
-		p.saveConfig(dns.Text, encrpKey.Text, socksPort.Text, conferenceId.Text, oauthToken.Text, masterSecret.Text)
+
+		// Validate master secret (required for secure operation)
+		if masterSecret.Text == "" {
+			validationLabel.SetText("ERROR: Master secret is required")
+			p.showError(fmt.Errorf("master secret is required for secure operation"))
+			return
+		}
+		if len(masterSecret.Text) < 8 {
+			validationLabel.SetText("ERROR: Master secret too short (min 8 chars)")
+			p.showError(fmt.Errorf("master secret must be at least 8 characters"))
+			return
+		}
+
+		validationLabel.SetText("Settings validated and saved")
+		p.buildRunString(conferenceId.Text, "", socksPort.Text, dns.Text, masterSecret.Text)
+		p.saveConfig(dns.Text, "", socksPort.Text, conferenceId.Text, oauthToken.Text, masterSecret.Text)
+		secretStatus.SetText("Master secret: configured")
 	})
 
 	content := container.NewVBox(
-		widget.NewLabel("Custom DNS Server"),
-		dns,
-		widget.NewLabel("Encryption Key"),
-		encrpKey,
-		widget.NewLabel("Socks Port"),
-		socksPort,
-		widget.NewLabel("Conference ID"),
-		conferenceId,
-		widget.NewLabel("OAuth Token (Yandex Disk)"),
-		oauthToken,
+		widget.NewLabelWithStyle("Security", fyne.TextAlignCenter, fyne.TextStyle{Bold: true}),
 		widget.NewLabel("Master Secret"),
 		masterSecret,
+		secretStatus,
+		widget.NewLabel("OAuth Token (optional, for room publishing)"),
+		oauthToken,
+		storageInfo,
+		widget.NewSeparator(),
+		widget.NewLabelWithStyle("Connection", fyne.TextAlignCenter, fyne.TextStyle{Bold: true}),
+		widget.NewLabel("Conference ID"),
+		conferenceId,
+		widget.NewLabel("SOCKS Port"),
+		socksPort,
+		widget.NewLabel("DNS Server"),
+		dns,
+		widget.NewSeparator(),
+		validationLabel,
 		applyBtn,
 	)
 	dialog.ShowCustom("Settings", "Close", content, p.ParentWindow)
