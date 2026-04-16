@@ -14,11 +14,27 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import android.content.SharedPreferences
+import androidx.security.crypto.EncryptedSharedPreferences
+import androidx.security.crypto.MasterKey
 import mobile.LogWriter
 import mobile.Mobile
 
 class TelemostTunnelController(private val appContext: Context) {
-    private val prefs: SharedPreferences = appContext.getSharedPreferences("olcrtc_prefs", Context.MODE_PRIVATE)
+    private val prefs: SharedPreferences = try {
+        val masterKey = MasterKey.Builder(appContext)
+            .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+            .build()
+        EncryptedSharedPreferences.create(
+            appContext,
+            "olcrtc_secure_prefs",
+            masterKey,
+            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+        )
+    } catch (e: Exception) {
+        // Fallback to regular prefs only if crypto init fails (should not happen)
+        appContext.getSharedPreferences("olcrtc_prefs", Context.MODE_PRIVATE)
+    }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var diagnosticsJob: Job? = null
     private var lastHandledIntentPayload: String? = null
@@ -96,14 +112,19 @@ class TelemostTunnelController(private val appContext: Context) {
 
     fun publishRoomToDisk() {
         val token = getOAuthToken()
+        val secret = getMasterSecret()
         val roomId = _meeting.value
         if (token.isBlank() || roomId.isBlank()) {
             appendLog("Cannot publish: OAuth token or room ID missing")
             return
         }
+        if (secret.isBlank()) {
+            appendLog("Cannot publish: Master secret required for signing room records")
+            return
+        }
         scope.launch {
             try {
-                Mobile.publishRoomToDisk(token, roomId, 3)
+                Mobile.publishRoomToDisk(token, secret, roomId, 3)
                 appendLog("Room $roomId published to Yandex Disk")
                 _status.value = "Published to Disk"
             } catch (t: Throwable) {
@@ -173,16 +194,12 @@ class TelemostTunnelController(private val appContext: Context) {
         scope.launch {
             try {
                 val masterSecret = getMasterSecret()
-                val keyHex = if (masterSecret.isNotBlank()) {
-                    Mobile.deriveKeyFromSecret(masterSecret, roomId)
-                } else {
-                    getKeyHex()
-                }
-                if (keyHex.isBlank()) {
+                if (masterSecret.isBlank()) {
                     _status.value = "Error"
-                    appendLog("No encryption key: configure Master Secret or Key in Settings")
+                    appendLog("Master secret is required. Configure it in Settings.")
                     return@launch
                 }
+                val keyHex = Mobile.deriveKeyFromSecret(masterSecret, roomId)
                 val socksPort = getSocksPort()
                 Mobile.start(roomId, keyHex, socksPort.toLong(), false, "", "")
                 _status.value = "Connecting to Telemost"
