@@ -74,7 +74,10 @@ func (p *Peer) Connect(ctx context.Context) error {
 
 	settingEngine := webrtc.SettingEngine{}
 	if protect.Protector != nil {
-		settingEngine.SetICEProxyDialer(protect.NewProxyDialer())
+		// Use socket-level protection instead of proxy dialer.
+		// SetICEProxyDialer forces TCP-only ICE, which blocks VP8 RTP over UDP.
+		// Instead, set net.Dialer Control function to protect each socket FD.
+		settingEngine.SetNet(protect.NewProtectedNet())
 	}
 	api := webrtc.NewAPI(webrtc.WithSettingEngine(settingEngine))
 
