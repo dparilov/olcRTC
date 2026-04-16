@@ -66,7 +66,7 @@ class TelemostTunnelController(private val appContext: Context) {
         launchTunnel(roomId)
     }
 
-    fun getKeyHex(): String = prefs.getString("key_hex", DEFAULT_KEY_HEX) ?: DEFAULT_KEY_HEX
+    fun getKeyHex(): String = prefs.getString("key_hex", "") ?: ""
 
     fun setKeyHex(key: String) {
         prefs.edit().putString("key_hex", key).apply()
@@ -178,6 +178,11 @@ class TelemostTunnelController(private val appContext: Context) {
                 } else {
                     getKeyHex()
                 }
+                if (keyHex.isBlank()) {
+                    _status.value = "Error"
+                    appendLog("No encryption key: configure Master Secret or Key in Settings")
+                    return@launch
+                }
                 val socksPort = getSocksPort()
                 Mobile.start(roomId, keyHex, socksPort.toLong(), false, "", "")
                 _status.value = "Connecting to Telemost"
@@ -279,6 +284,7 @@ class TelemostTunnelController(private val appContext: Context) {
         private val ROOM_ID_REGEX = Regex("[A-Za-z0-9_-]{6,}")
         private const val READY_TIMEOUT_MS = 30_000L
         private const val DEFAULT_SOCKS_PORT = 1080
-        private const val DEFAULT_KEY_HEX = "d9d528926ca69ef9d422fcdd010cc27c8cd2c3ae37aa21927e2b3f8c59a921f3"
+        // No default key — must be derived from master secret or provided explicitly
+        private const val DEFAULT_KEY_HEX = ""
     }
 }

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 	"regexp"
 	"strings"
 	"sync"
@@ -23,7 +24,7 @@ const (
 	defaultSOCKSPort       = 10808
 	defaultReadyWait       = 60_000
 	defaultDiagnosticsWait = 35 * time.Second
-	defaultTunnelKey       = "d9d528926ca69ef9d422fcdd010cc27c8cd2c3ae37aa21927e2b3f8c59a921f3"
+	// defaultTunnelKey removed — keys must come from master-secret derivation or explicit user input
 	desktopWindowName      = "olcRTC Windows Client"
 )
 
@@ -180,7 +181,12 @@ func (d *desktopApp) launchTunnel() {
 }
 
 func (d *desktopApp) startTunnel(token uint64, roomID string) {
-	if err := mobile.Start(roomID, defaultTunnelKey, defaultSOCKSPort, false, "", ""); err != nil {
+	keyHex := d.resolveKey(roomID)
+	if keyHex == "" {
+		d.finishLaunchWithError(token, "No encryption key: configure Master Secret or Encryption Key in settings")
+		return
+	}
+	if err := mobile.Start(roomID, keyHex, defaultSOCKSPort, false, "", ""); err != nil {
 		d.finishLaunchWithError(token, "Start failed: "+err.Error())
 		return
 	}
@@ -467,6 +473,22 @@ func (d *desktopApp) readyRuntimeDescription() string {
 	}
 
 	return fmt.Sprintf("Room %s connected; SOCKS endpoint ready at %s:%d", roomID, defaultSOCKSHost, defaultSOCKSPort)
+}
+
+// resolveKey returns the tunnel encryption key.
+// Priority: 1) HMAC(master_secret, roomID) if master secret set
+//           2) explicit encryption key from config
+//           3) empty string (fail-closed)
+func (d *desktopApp) resolveKey(roomID string) string {
+	// TODO: read master secret and encryption key from desktopApp config/prefs
+	// For now, check environment variables as a secure fallback
+	if ms := os.Getenv("OLCRTC_MASTER_SECRET"); ms != "" {
+		return mobile.DeriveKeyFromSecret(ms, roomID)
+	}
+	if key := os.Getenv("OLCRTC_KEY"); key != "" {
+		return key
+	}
+	return "" // fail-closed: no key available
 }
 
 func (d *desktopApp) shutdown() {
