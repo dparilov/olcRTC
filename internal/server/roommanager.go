@@ -31,10 +31,11 @@ type RoomManager struct {
 }
 
 // RoomInfo is returned by the HTTP API.
+// NOTE: key_hex is intentionally NOT included — keys are derived
+// from the shared master secret, never transmitted over the network.
 type RoomInfo struct {
 	RoomID  string `json:"room_id"`
 	RoomURL string `json:"room_url"`
-	KeyHex  string `json:"key_hex"`
 	Expires string `json:"expires"` // ISO 8601
 }
 
@@ -148,7 +149,8 @@ func (rm *RoomManager) serveHTTP(ctx context.Context) {
 		fmt.Fprintf(w, "ok")
 	})
 
-	addr := fmt.Sprintf(":%d", rm.apiPort)
+	// Bind to loopback only — never expose to public network
+	addr := fmt.Sprintf("127.0.0.1:%d", rm.apiPort)
 	srv := &http.Server{Addr: addr, Handler: mux}
 
 	go func() {
@@ -167,12 +169,11 @@ func (rm *RoomManager) handleRoom(w http.ResponseWriter, r *http.Request) {
 	info := RoomInfo{
 		RoomID:  rm.roomID,
 		RoomURL: rm.roomURL,
-		KeyHex:  rm.keyHex,
 		Expires: time.Now().Add(rm.rotateInterval).Format(time.RFC3339),
 	}
 	rm.mu.RUnlock()
 
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
+	// No CORS — API is loopback-only by default
 	json.NewEncoder(w).Encode(info)
 }

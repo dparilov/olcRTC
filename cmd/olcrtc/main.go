@@ -456,7 +456,6 @@ func fetchRoomFromAPI(apiURL string) (string, string, error) {
 
 	var info struct {
 		RoomURL string `json:"room_url"`
-		KeyHex  string `json:"key_hex"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
 		return "", "", err
@@ -466,7 +465,8 @@ func fetchRoomFromAPI(apiURL string) (string, string, error) {
 		return "", "", fmt.Errorf("API returned empty room_url")
 	}
 
-	return info.RoomURL, info.KeyHex, nil
+	// Key is NOT returned by API — must be derived from master secret
+	return info.RoomURL, "", nil
 }
 
 func waitForShutdown(errCh <-chan error) error {
