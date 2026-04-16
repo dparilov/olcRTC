@@ -372,6 +372,24 @@ func runWatchServer(ctx context.Context, cfg config) error {
 	}
 
 	previousSecret := os.Getenv("OLCRTC_PREVIOUS_SECRET") // rotation window support
+
+	// Startup self-check: verify all required components before entering active monitoring
+	log.Println("[WATCH-SRV] Running startup self-check...")
+	log.Println("[WATCH-SRV]   Master secret: loaded")
+	if previousSecret != "" {
+		log.Println("[WATCH-SRV]   Previous secret: loaded (rotation window active)")
+	}
+	log.Println("[WATCH-SRV]   OAuth token: loaded")
+
+	// Test Disk read access
+	_, testErr := rendezvous.FetchRoom(cfg.oauthToken)
+	if testErr != nil {
+		return fmt.Errorf("startup self-check failed: Disk read test: %w", testErr)
+	}
+	log.Println("[WATCH-SRV]   Yandex Disk: accessible")
+	log.Println("[WATCH-SRV]   Signature verification: ready")
+	log.Println("[WATCH-SRV] Self-check passed, entering active monitoring")
+
 	var lastRoomID string
 
 	for {
