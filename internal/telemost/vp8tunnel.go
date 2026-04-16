@@ -14,30 +14,45 @@ import (
 
 const DataFrameMarker = 0xFF
 
-// buildDataFrame wraps payload into a VP8-looking frame:
-// [0xFF][uint32 big-endian length][payload]
+// vp8DataPrefix is prepended to data frames so the SFU sees a valid
+// VP8 interframe header and forwards the packet instead of dropping it.
+// Without this prefix, frames starting with 0xFF are invalid VP8 and
+// the Telemost SFU silently drops them.
+var vp8DataPrefix = []byte{
+	177, 1, 0, 8, 17, 24, 0, 24, 0, 24, 88, 47, 244, 0, 8, 0, 0,
+}
+
+// buildDataFrame wraps payload into a VP8-valid frame:
+// [vp8DataPrefix (17 bytes)][0xFF][uint32 big-endian length][payload]
+// The SFU sees a valid VP8 interframe and forwards it to subscribers.
 func buildDataFrame(data []byte) []byte {
-	frame := make([]byte, 1+4+len(data))
-	frame[0] = DataFrameMarker
-	binary.BigEndian.PutUint32(frame[1:5], uint32(len(data)))
-	copy(frame[5:], data)
+	pLen := len(vp8DataPrefix)
+	frame := make([]byte, pLen+1+4+len(data))
+	copy(frame[:pLen], vp8DataPrefix)
+	frame[pLen] = DataFrameMarker
+	binary.BigEndian.PutUint32(frame[pLen+1:pLen+5], uint32(len(data)))
+	copy(frame[pLen+5:], data)
 	return frame
 }
 
 // ExtractDataFromPayload extracts embedded data from a VP8 frame.
 // Returns nil if the frame is a keepalive (not a data frame).
+// Data frames are longer than the 17-byte interframe prefix and
+// contain a 0xFF marker immediately after it.
 func ExtractDataFromPayload(payload []byte) []byte {
-	if len(payload) < 5 {
+	pLen := len(vp8DataPrefix)
+	// Must be longer than prefix + marker + length header
+	if len(payload) <= pLen+5 {
 		return nil
 	}
-	if payload[0] != DataFrameMarker {
+	if payload[pLen] != DataFrameMarker {
 		return nil
 	}
-	dataLen := binary.BigEndian.Uint32(payload[1:5])
-	if dataLen == 0 || int(dataLen) > len(payload)-5 {
+	dataLen := binary.BigEndian.Uint32(payload[pLen+1 : pLen+5])
+	if dataLen == 0 || int(dataLen) > len(payload)-pLen-5 {
 		return nil
 	}
-	return payload[5 : 5+dataLen]
+	return payload[pLen+5 : pLen+5+int(dataLen)]
 }
 
 // VP8Sender sends data embedded in VP8 video frames via a sample track.
