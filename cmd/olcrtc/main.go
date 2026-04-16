@@ -112,8 +112,19 @@ func parseFlags() config {
 	flag.StringVar(&cfg.socksProxyAddr, "socks-proxy", "", "SOCKS5 proxy address (server only)")
 	flag.IntVar(&cfg.socksProxyPort, "socks-proxy-port", 1080, "SOCKS5 proxy port (server only)")
 	flag.BoolVar(&cfg.autoRoom, "auto-room", false, "Auto-create and rotate Telemost rooms (server only)")
-	flag.StringVar(&cfg.oauthToken, "oauth-token", "", "Yandex OAuth token for room creation + disk")
-	flag.StringVar(&cfg.masterSecret, "master-secret", "", "Shared secret for deterministic key derivation")
+	flag.StringVar(&cfg.oauthToken, "oauth-token", "", "Yandex OAuth token (prefer OLCRTC_OAUTH_TOKEN env)")
+	flag.StringVar(&cfg.masterSecret, "master-secret", "", "Shared secret (prefer OLCRTC_MASTER_SECRET env)")
+
+	// Env vars take priority over flags (secrets should not be in argv)
+	if envToken := os.Getenv("OLCRTC_OAUTH_TOKEN"); envToken != "" {
+		cfg.oauthToken = envToken
+	}
+	if envSecret := os.Getenv("OLCRTC_MASTER_SECRET"); envSecret != "" {
+		cfg.masterSecret = envSecret
+	}
+	if envKey := os.Getenv("OLCRTC_KEY"); envKey != "" {
+		cfg.keyHex = envKey
+	}
 	flag.IntVar(&cfg.rotateHours, "rotate-hours", 3, "Room rotation interval in hours")
 	flag.IntVar(&cfg.apiPort, "api-port", 8080, "HTTP API port for room discovery (0=disabled)")
 	flag.StringVar(&cfg.apiURL, "api-url", "", "Server API URL for room discovery (direct HTTP)")

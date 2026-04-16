@@ -13,6 +13,16 @@ import (
 type Config struct {
 	Os            string
 	DNS           string `json:"dns"`
+	EncryptionKey string `json:"-"` // not persisted in JSON (security)
+	SocksPort     string `json:"socks_port"`
+	ConferenceID  string `json:"conference_id"`
+	OAuthToken    string `json:"-"` // not persisted in JSON (security)
+	MasterSecret  string `json:"-"` // not persisted in JSON (security)
+}
+
+// legacyConfig is used to read old configs that may contain secrets.
+type legacyConfig struct {
+	DNS           string `json:"dns"`
 	EncryptionKey string `json:"encryption_key"`
 	SocksPort     string `json:"socks_port"`
 	ConferenceID  string `json:"conference_id"`
@@ -55,7 +65,6 @@ func (p *Program) getConfigPath() string {
 		log("WARNING: Could not create config directory: %v", err)
 	}
 	return filepath.Join(configDir, "config.json")
-
 }
 
 func (p *Program) loadConfig() *Config {
@@ -77,10 +86,46 @@ func (p *Program) loadConfig() *Config {
 		}
 		return cfg
 	}
-	if err := json.Unmarshal(data, cfg); err != nil {
+
+	// First pass: read with legacyConfig to extract any persisted secrets
+	var legacy legacyConfig
+	if err := json.Unmarshal(data, &legacy); err != nil {
 		log("WARNING: Could not parse config file: %v", err)
 		return cfg
 	}
+
+	// Second pass: read non-secret fields into Config (json:"-" fields skipped)
+	if err := json.Unmarshal(data, cfg); err != nil {
+		log("WARNING: Could not parse config file (pass 2): %v", err)
+		return cfg
+	}
+
+	// Migrate legacy secrets: load into memory, then rewrite config without them
+	migrated := false
+	if legacy.EncryptionKey != "" {
+		cfg.EncryptionKey = legacy.EncryptionKey
+		migrated = true
+	}
+	if legacy.OAuthToken != "" {
+		cfg.OAuthToken = legacy.OAuthToken
+		migrated = true
+	}
+	if legacy.MasterSecret != "" {
+		cfg.MasterSecret = legacy.MasterSecret
+		migrated = true
+	}
+	if migrated {
+		log("SECURITY: Found secrets in config file - migrating to memory-only, rewriting clean config")
+		cleanData, mErr := json.MarshalIndent(cfg, "", "  ")
+		if mErr == nil {
+			if wErr := os.WriteFile(configPath, cleanData, 0600); wErr != nil {
+				log("WARNING: Could not rewrite clean config: %v", wErr)
+			} else {
+				log("Config file rewritten without secrets")
+			}
+		}
+	}
+
 	cfg.ConferenceID = strings.ReplaceAll(cfg.ConferenceID, " ", "")
 	if !isValidConferenceID(cfg.ConferenceID) {
 		log("WARNING: Invalid conference ID in config (must be numbers only)")
@@ -128,7 +173,7 @@ func (p *Program) saveConfig(dns, encryptionKey, socksPort, conferenceID, oauthT
 		return
 	}
 
-	if err := os.WriteFile(configPath, data, 0644); err != nil {
+	if err := os.WriteFile(configPath, data, 0600); err != nil {
 		log("ERROR: Could not write config file: %v", err)
 		p.showError(err)
 		return

@@ -41,6 +41,18 @@ func (p *Program) olcrtcRun() {
 		cmd = exec.Command("sh", "-c", p.RunString)
 	}
 
+	// Pass secrets via environment, not argv
+	cmd.Env = os.Environ()
+	if p.Config.MasterSecret != "" {
+		cmd.Env = append(cmd.Env, "OLCRTC_MASTER_SECRET="+p.Config.MasterSecret)
+	}
+	if p.Config.OAuthToken != "" {
+		cmd.Env = append(cmd.Env, "OLCRTC_OAUTH_TOKEN="+p.Config.OAuthToken)
+	}
+	if p.Config.EncryptionKey != "" {
+		cmd.Env = append(cmd.Env, "OLCRTC_KEY="+p.Config.EncryptionKey)
+	}
+
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		log("ERROR: Failed to create stdout pipe: %v", err)

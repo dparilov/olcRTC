@@ -72,30 +72,20 @@ func (p *Program) settingsWindow() {
 func (p *Program) buildRunString(conferenceId, encryptionKey, socksPort, dns, masterSecret string) {
 	log("Building run string...")
 	log("  Conference ID: %s", conferenceId)
-	log("  Encryption Key: %s", encryptionKey)
+	log("  Encryption Key: [REDACTED]")
 	log("  Socks Port: %s", socksPort)
 	log("  DNS Server: %s", dns)
+
+	// Secrets passed via env vars, NOT argv (security: prevents process list / shell history leaks)
 	switch p.Config.Os {
 	case "windows":
-		if masterSecret != "" {
-			p.RunString = fmt.Sprintf("olcrtc.exe -mode cnc -id \"%s\" --master-secret \"%s\" --oauth-token \"%s\" -socks-port %s -dns %s", conferenceId, masterSecret, p.Config.OAuthToken, socksPort, dns)
-		} else {
-			p.RunString = fmt.Sprintf("olcrtc.exe -mode cnc -id \"%s\" -key \"%s\" -socks-port %s -dns %s", conferenceId, encryptionKey, socksPort, dns)
-		}
+		p.RunString = fmt.Sprintf("olcrtc.exe -mode cnc -id \"%s\" -socks-port %s -dns %s", conferenceId, socksPort, dns)
 	case "linux", "darwin":
-		if masterSecret != "" {
-			p.RunString = fmt.Sprintf("./olcrtc -mode cnc -id \"%s\" --master-secret \"%s\" --oauth-token \"%s\" -socks-port %s -dns %s", conferenceId, masterSecret, p.Config.OAuthToken, socksPort, dns)
-		} else {
-			p.RunString = fmt.Sprintf("./olcrtc -mode cnc -id \"%s\" -key \"%s\" -socks-port %s -dns %s", conferenceId, encryptionKey, socksPort, dns)
-		}
+		p.RunString = fmt.Sprintf("./olcrtc -mode cnc -id \"%s\" -socks-port %s -dns %s", conferenceId, socksPort, dns)
 	default:
-		if masterSecret != "" {
-			p.RunString = fmt.Sprintf("olcrtc -mode cnc -id \"%s\" --master-secret \"%s\" --oauth-token \"%s\" -socks-port %s -dns %s", conferenceId, masterSecret, p.Config.OAuthToken, socksPort, dns)
-		} else {
-			p.RunString = fmt.Sprintf("olcrtc -mode cnc -id \"%s\" -key \"%s\" -socks-port %s -dns %s", conferenceId, encryptionKey, socksPort, dns)
-		}
+		p.RunString = fmt.Sprintf("olcrtc -mode cnc -id \"%s\" -socks-port %s -dns %s", conferenceId, socksPort, dns)
 	}
-	log("Generated command: %s", p.RunString)
+	log("Generated command: %s (secrets via env)", p.RunString)
 }
 
 func (p *Program) showError(err error) {
