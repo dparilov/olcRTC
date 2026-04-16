@@ -104,7 +104,8 @@ func parseFlags() config {
 	flag.StringVar(&cfg.provider, "provider", "telemost", "Provider (telemost only)")
 	flag.IntVar(&cfg.socksPort, "socks-port", 1080, "SOCKS5 port (client only)")
 	flag.StringVar(&cfg.socksHost, "socks-host", "127.0.0.1", "SOCKS5 listen host (client only)")
-	flag.StringVar(&cfg.keyHex, "key", "", "Shared encryption key (hex)")
+	// NOTE: -key flag removed for security (secrets must use env vars only)
+	// cfg.keyHex is set from OLCRTC_KEY env var below
 	flag.BoolVar(&cfg.debug, "debug", false, "Enable verbose logging")
 	flag.StringVar(&cfg.dataDir, "data", "data", "Path to data directory")
 	flag.BoolVar(&cfg.duo, "duo", false, "Use dual channels for 2x throughput")
@@ -112,19 +113,13 @@ func parseFlags() config {
 	flag.StringVar(&cfg.socksProxyAddr, "socks-proxy", "", "SOCKS5 proxy address (server only)")
 	flag.IntVar(&cfg.socksProxyPort, "socks-proxy-port", 1080, "SOCKS5 proxy port (server only)")
 	flag.BoolVar(&cfg.autoRoom, "auto-room", false, "Auto-create and rotate Telemost rooms (server only)")
-	flag.StringVar(&cfg.oauthToken, "oauth-token", "", "Yandex OAuth token (prefer OLCRTC_OAUTH_TOKEN env)")
-	flag.StringVar(&cfg.masterSecret, "master-secret", "", "Shared secret (prefer OLCRTC_MASTER_SECRET env)")
+	// NOTE: --oauth-token and --master-secret flags removed for security.
+	// Secrets must be passed via env vars: OLCRTC_OAUTH_TOKEN, OLCRTC_MASTER_SECRET
 
-	// Env vars take priority over flags (secrets should not be in argv)
-	if envToken := os.Getenv("OLCRTC_OAUTH_TOKEN"); envToken != "" {
-		cfg.oauthToken = envToken
-	}
-	if envSecret := os.Getenv("OLCRTC_MASTER_SECRET"); envSecret != "" {
-		cfg.masterSecret = envSecret
-	}
-	if envKey := os.Getenv("OLCRTC_KEY"); envKey != "" {
-		cfg.keyHex = envKey
-	}
+	// Secrets loaded exclusively from env vars (never argv)
+	cfg.oauthToken = os.Getenv("OLCRTC_OAUTH_TOKEN")
+	cfg.masterSecret = os.Getenv("OLCRTC_MASTER_SECRET")
+	cfg.keyHex = os.Getenv("OLCRTC_KEY")
 	flag.IntVar(&cfg.rotateHours, "rotate-hours", 3, "Room rotation interval in hours")
 	flag.IntVar(&cfg.apiPort, "api-port", 8080, "HTTP API port for room discovery (0=disabled)")
 	flag.StringVar(&cfg.apiURL, "api-url", "", "Server API URL for room discovery (direct HTTP)")
@@ -234,10 +229,10 @@ func runMode(ctx context.Context, cfg config, errCh chan<- error) {
 
 func runAutoRoomServer(ctx context.Context, cfg config) error {
 	if cfg.oauthToken == "" {
-		return fmt.Errorf("--oauth-token required for --auto-room mode")
+		return fmt.Errorf("OLCRTC_OAUTH_TOKEN required for --auto-room mode")
 	}
 	if cfg.masterSecret == "" {
-		return fmt.Errorf("--master-secret required for --auto-room mode")
+		return fmt.Errorf("OLCRTC_MASTER_SECRET required for --auto-room mode")
 	}
 
 	rotateInterval := time.Duration(cfg.rotateHours) * time.Hour
@@ -302,10 +297,10 @@ func runAPIClient(ctx context.Context, cfg config) error {
 
 func runDiscoverClient(ctx context.Context, cfg config) error {
 	if cfg.oauthToken == "" {
-		return fmt.Errorf("--oauth-token required for --discover mode")
+		return fmt.Errorf("OLCRTC_OAUTH_TOKEN required for --discover mode")
 	}
 	if cfg.masterSecret == "" {
-		return fmt.Errorf("--master-secret required for --discover mode")
+		return fmt.Errorf("OLCRTC_MASTER_SECRET required for --discover mode")
 	}
 
 	previousSecret := os.Getenv("OLCRTC_PREVIOUS_SECRET") // rotation window support
@@ -370,10 +365,10 @@ func runDiscoverClient(ctx context.Context, cfg config) error {
 
 func runWatchServer(ctx context.Context, cfg config) error {
 	if cfg.oauthToken == "" {
-		return fmt.Errorf("--oauth-token required for --discover server mode")
+		return fmt.Errorf("OLCRTC_OAUTH_TOKEN required for --discover server mode")
 	}
 	if cfg.masterSecret == "" {
-		return fmt.Errorf("--master-secret required for --discover server mode")
+		return fmt.Errorf("OLCRTC_MASTER_SECRET required for --discover server mode")
 	}
 
 	previousSecret := os.Getenv("OLCRTC_PREVIOUS_SECRET") // rotation window support
