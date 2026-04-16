@@ -379,8 +379,19 @@ class TelemostTunnelController(private val appContext: Context) {
         val fallback = lastHandledIntentPayload?.let { parseMeeting(it) }
         if (fallback != null) {
             appendLog("Using meeting parsed from launch intent fallback")
+            return fallback
         }
-        return fallback
+
+        // Final fallback: use saved room URL from settings
+        val savedRoom = getRoomUrl()
+        if (savedRoom.isNotBlank()) {
+            val parsed = parseMeeting(savedRoom)
+            if (parsed != null) {
+                appendLog("Using saved room URL: $parsed")
+                return parsed
+            }
+        }
+        return null
     }
 
     private fun extractIntentPayload(intent: Intent?): String? {
@@ -433,7 +444,7 @@ class TelemostTunnelController(private val appContext: Context) {
 
     companion object {
         private val TELEMOST_REGEX = Regex("https://telemost\\.yandex(?:\\.ru|\\.com)/j/([A-Za-z0-9_-]+)")
-        private val ROOM_ID_REGEX = Regex("[A-Za-z0-9_-]{6,}")
+        private val ROOM_ID_REGEX = Regex("\\d{10,}")
         private const val READY_TIMEOUT_MS = 30_000L
         private const val DEFAULT_SOCKS_PORT = 1080
         // No default key — must be derived from master secret or provided explicitly
