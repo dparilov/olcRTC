@@ -80,8 +80,8 @@ We maintain a patched copy in `third_party/anet/` with linkname directives remov
 
 | Script | Purpose |
 |--------|---------|
-| `script/srv.sh` | Server deployment via Podman |
-| `script/cnc.sh` | Client deployment via Podman |
+| `script/deploy-server.sh` | Automated server deploy (secrets via env) |
+| `script/rotate-secret-server.sh` | Master secret rotation |
 | `script/build-windows-client.sh` | Windows cross-compilation |
 | `script/ui.sh` | UI launcher |
 | `script/linux-testbed.sh` | Linux transport test harness |

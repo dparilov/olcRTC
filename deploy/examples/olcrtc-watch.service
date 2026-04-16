@@ -1,0 +1,23 @@
+[Unit]
+Description=olcRTC Server (Yandex Disk watch mode)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+EnvironmentFile=/opt/olcrtc.secrets
+ExecStartPre=/opt/olcrtc -mode check
+ExecStart=/opt/olcrtc -mode srv -discover -dns 1.1.1.1:53
+Restart=on-failure
+RestartSec=10
+
+# Security hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/opt
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

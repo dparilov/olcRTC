@@ -28,10 +28,10 @@ or wait for the release or at least a beta
 
 ```bash
 # server ( podman, pre configured, easy )
-./script/srv.sh
+OLCRTC_MASTER_SECRET=... OLCRTC_OAUTH_TOKEN=... ./script/deploy-server.sh <VPS_HOST>
 
 # client ( podman, pre configured, easy   
-./script/cnc.sh
+OLCRTC_MASTER_SECRET=... ./olcrtc -mode cnc --discover -socks-port 18090
 
 
 # Also there's a client UI version (currently in beta)
