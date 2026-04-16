@@ -2,8 +2,6 @@ package server
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -11,15 +9,18 @@ import (
 	"sync"
 	"time"
 
+	"github.com/openlibrecommunity/olcrtc/internal/rendezvous"
 	"github.com/openlibrecommunity/olcrtc/internal/telemost"
 )
 
 // RoomManager creates and rotates Telemost rooms automatically.
-// It also serves an HTTP API for clients to discover the current room.
+// Room discovery uses Yandex Disk as a passive rendezvous (CloudTransport pattern).
+// Optionally also serves a local HTTP API for direct-access scenarios.
 type RoomManager struct {
 	oauthToken     string
+	masterSecret   string
 	rotateInterval time.Duration
-	apiPort        int
+	apiPort        int // 0 = no HTTP API
 
 	mu      sync.RWMutex
 	roomID  string
@@ -38,12 +39,14 @@ type RoomInfo struct {
 }
 
 // NewRoomManager creates a room manager.
-// oauthToken: Yandex OAuth token with telemost:write scope
+// oauthToken: Yandex OAuth token with telemost + disk scopes
+// masterSecret: shared secret for deterministic key derivation
 // rotateInterval: how often to create a new room (e.g. 3h)
-// apiPort: HTTP port for the /api/room endpoint
-func NewRoomManager(oauthToken string, rotateInterval time.Duration, apiPort int) *RoomManager {
+// apiPort: HTTP port for /api/room (0 = disabled)
+func NewRoomManager(oauthToken, masterSecret string, rotateInterval time.Duration, apiPort int) *RoomManager {
 	return &RoomManager{
 		oauthToken:     oauthToken,
+		masterSecret:   masterSecret,
 		rotateInterval: rotateInterval,
 		apiPort:        apiPort,
 	}
@@ -61,15 +64,17 @@ func (rm *RoomManager) CurrentRoom() (string, string) {
 	return rm.roomURL, rm.keyHex
 }
 
-// Run starts the room manager: creates first room, starts HTTP API, rotates.
+// Run starts the room manager: creates first room, publishes to Disk, rotates.
 func (rm *RoomManager) Run(ctx context.Context) error {
 	// Create first room
-	if err := rm.createNewRoom(); err != nil {
+	if err := rm.createAndPublish(); err != nil {
 		return fmt.Errorf("create initial room: %w", err)
 	}
 
-	// Start HTTP API
-	go rm.serveHTTP(ctx)
+	// Optionally start HTTP API (for direct-access scenarios)
+	if rm.apiPort > 0 {
+		go rm.serveHTTP(ctx)
+	}
 
 	// Room rotation loop
 	ticker := time.NewTicker(rm.rotateInterval)
@@ -78,18 +83,22 @@ func (rm *RoomManager) Run(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
+			// Cleanup: delete room file on shutdown
+			log.Println("[ROOM-MGR] Shutting down, cleaning up Yandex Disk...")
+			if err := rendezvous.DeleteRoom(rm.oauthToken); err != nil {
+				log.Printf("[ROOM-MGR] Cleanup warning: %v", err)
+			}
 			return nil
 		case <-ticker.C:
-			if err := rm.createNewRoom(); err != nil {
+			if err := rm.createAndPublish(); err != nil {
 				log.Printf("[ROOM-MGR] Failed to rotate room: %v", err)
-				// Don't fail — keep using current room
-				continue
+				continue // keep using current room
 			}
 		}
 	}
 }
 
-func (rm *RoomManager) createNewRoom() error {
+func (rm *RoomManager) createAndPublish() error {
 	log.Println("[ROOM-MGR] Creating new Telemost room...")
 
 	conf, err := telemost.CreateConference(rm.oauthToken)
@@ -97,14 +106,22 @@ func (rm *RoomManager) createNewRoom() error {
 		return fmt.Errorf("create conference: %w", err)
 	}
 
-	// Generate new encryption key
-	keyBytes := make([]byte, 32)
-	if _, err := rand.Read(keyBytes); err != nil {
-		return fmt.Errorf("generate key: %w", err)
-	}
-	keyHex := hex.EncodeToString(keyBytes)
-
+	// Deterministic key: HMAC(masterSecret, roomID)
+	keyHex := rendezvous.DeriveKey(rm.masterSecret, conf.RoomID)
 	roomURL := "https://telemost.yandex.ru/j/" + conf.RoomID
+	now := time.Now()
+
+	// Publish to Yandex Disk (passive rendezvous)
+	record := &rendezvous.RoomRecord{
+		RoomID:    conf.RoomID,
+		RoomURL:   roomURL,
+		CreatedAt: now.Format(time.RFC3339),
+		ExpiresAt: now.Add(rm.rotateInterval).Format(time.RFC3339),
+		Version:   1,
+	}
+	if err := rendezvous.PublishRoom(rm.oauthToken, record); err != nil {
+		return fmt.Errorf("publish to disk: %w", err)
+	}
 
 	rm.mu.Lock()
 	rm.roomID = conf.RoomID
@@ -112,7 +129,7 @@ func (rm *RoomManager) createNewRoom() error {
 	rm.keyHex = keyHex
 	rm.mu.Unlock()
 
-	log.Printf("[ROOM-MGR] New room: %s (rotates in %v)", conf.RoomID, rm.rotateInterval)
+	log.Printf("[ROOM-MGR] Published room %s to Yandex Disk (rotates in %v)", conf.RoomID, rm.rotateInterval)
 
 	if rm.onNewRoom != nil {
 		rm.onNewRoom(roomURL, keyHex)
@@ -120,6 +137,8 @@ func (rm *RoomManager) createNewRoom() error {
 
 	return nil
 }
+
+// --- Optional HTTP API (for direct-access scenarios) ---
 
 func (rm *RoomManager) serveHTTP(ctx context.Context) {
 	mux := http.NewServeMux()

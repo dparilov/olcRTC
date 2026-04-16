@@ -19,6 +19,7 @@ import (
 	"github.com/openlibrecommunity/olcrtc/internal/client"
 	"github.com/openlibrecommunity/olcrtc/internal/logger"
 	"github.com/openlibrecommunity/olcrtc/internal/names"
+	"github.com/openlibrecommunity/olcrtc/internal/rendezvous"
 	"github.com/openlibrecommunity/olcrtc/internal/server"
 )
 
@@ -38,10 +39,12 @@ type config struct {
 	// Auto-room management (server)
 	autoRoom       bool
 	oauthToken     string
+	masterSecret   string
 	rotateHours    int
 	apiPort        int
-	// API-based room discovery (client)
-	apiURL         string
+	// Room discovery (client)
+	apiURL         string  // direct HTTP API
+	discover       bool    // Yandex Disk rendezvous
 }
 
 var (
@@ -109,10 +112,12 @@ func parseFlags() config {
 	flag.StringVar(&cfg.socksProxyAddr, "socks-proxy", "", "SOCKS5 proxy address (server only)")
 	flag.IntVar(&cfg.socksProxyPort, "socks-proxy-port", 1080, "SOCKS5 proxy port (server only)")
 	flag.BoolVar(&cfg.autoRoom, "auto-room", false, "Auto-create and rotate Telemost rooms (server only)")
-	flag.StringVar(&cfg.oauthToken, "oauth-token", "", "Yandex OAuth token for room creation")
+	flag.StringVar(&cfg.oauthToken, "oauth-token", "", "Yandex OAuth token for room creation + disk")
+	flag.StringVar(&cfg.masterSecret, "master-secret", "", "Shared secret for deterministic key derivation")
 	flag.IntVar(&cfg.rotateHours, "rotate-hours", 3, "Room rotation interval in hours")
-	flag.IntVar(&cfg.apiPort, "api-port", 8080, "HTTP API port for room discovery")
-	flag.StringVar(&cfg.apiURL, "api-url", "", "Server API URL for room discovery (client only, e.g. http://server:8080/api/room)")
+	flag.IntVar(&cfg.apiPort, "api-port", 8080, "HTTP API port for room discovery (0=disabled)")
+	flag.StringVar(&cfg.apiURL, "api-url", "", "Server API URL for room discovery (direct HTTP)")
+	flag.BoolVar(&cfg.discover, "discover", false, "Discover room via Yandex Disk rendezvous (client only)")
 	flag.Parse()
 
 	return cfg
@@ -132,7 +137,7 @@ func validateConfig(cfg config) error {
 	switch {
 	case cfg.provider != "telemost":
 		return errUnsupportedProvider
-	case cfg.roomID == "" && !cfg.autoRoom && cfg.apiURL == "":
+	case cfg.roomID == "" && !cfg.autoRoom && cfg.apiURL == "" && !cfg.discover:
 		return errRoomIDRequired
 	case cfg.mode != "srv" && cfg.mode != "cnc":
 		return errModeRequired
@@ -182,7 +187,9 @@ func runMode(ctx context.Context, cfg config, errCh chan<- error) {
 			)
 		}
 	case "cnc":
-		if cfg.apiURL != "" {
+		if cfg.discover {
+			errCh <- runDiscoverClient(ctx, cfg)
+		} else if cfg.apiURL != "" {
 			errCh <- runAPIClient(ctx, cfg)
 		} else {
 			roomURL := "https://telemost.yandex.ru/j/" + cfg.roomID
@@ -204,9 +211,12 @@ func runAutoRoomServer(ctx context.Context, cfg config) error {
 	if cfg.oauthToken == "" {
 		return fmt.Errorf("--oauth-token required for --auto-room mode")
 	}
+	if cfg.masterSecret == "" {
+		return fmt.Errorf("--master-secret required for --auto-room mode")
+	}
 
 	rotateInterval := time.Duration(cfg.rotateHours) * time.Hour
-	rm := server.NewRoomManager(cfg.oauthToken, rotateInterval, cfg.apiPort)
+	rm := server.NewRoomManager(cfg.oauthToken, cfg.masterSecret, rotateInterval, cfg.apiPort)
 
 	var serverCancel context.CancelFunc
 	var serverCtx context.Context
@@ -256,6 +266,42 @@ func runAPIClient(ctx context.Context, cfg config) error {
 	return client.Run(
 		ctx,
 		roomURL,
+		keyHex,
+		cfg.socksPort,
+		cfg.duo,
+		cfg.socksHost,
+		"",
+		"",
+	)
+}
+
+func runDiscoverClient(ctx context.Context, cfg config) error {
+	if cfg.oauthToken == "" {
+		return fmt.Errorf("--oauth-token required for --discover mode")
+	}
+	if cfg.masterSecret == "" {
+		return fmt.Errorf("--master-secret required for --discover mode")
+	}
+
+	log.Printf("[DISCOVER] Fetching room from Yandex Disk...")
+
+	record, err := rendezvous.FetchRoom(cfg.oauthToken)
+	if err != nil {
+		return fmt.Errorf("fetch room from Yandex Disk: %w", err)
+	}
+	if record == nil {
+		return fmt.Errorf("no active room published on Yandex Disk")
+	}
+	if rendezvous.IsExpired(record) {
+		log.Printf("[DISCOVER] Warning: room %s is expired (expires_at=%s)", record.RoomID, record.ExpiresAt)
+	}
+
+	keyHex := rendezvous.DeriveKey(cfg.masterSecret, record.RoomID)
+	log.Printf("[DISCOVER] Room: %s, key derived from master secret", record.RoomURL)
+
+	return client.Run(
+		ctx,
+		record.RoomURL,
 		keyHex,
 		cfg.socksPort,
 		cfg.duo,
