@@ -65,6 +65,7 @@ class TelemostTunnelController(private val appContext: Context) {
     }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var diagnosticsJob: Job? = null
+    private var logUploadJob: Job? = null
     private var lastHandledIntentPayload: String? = null
     private val _status = MutableStateFlow("Idle")
     private val _meeting = MutableStateFlow("No meeting link parsed yet")
@@ -82,6 +83,13 @@ class TelemostTunnelController(private val appContext: Context) {
         Mobile.setLogWriter(LogWriter { line -> appendLog(line) })
         _status.value = if (Mobile.isRunning()) "Running" else "Idle"
         appendLog("Controller initialized")
+        // Start periodic log upload to Yandex Disk (every 60s)
+        logUploadJob = scope.launch {
+            while (true) {
+                delay(60_000)
+                try { sendLogToDisk() } catch (_: Exception) {}
+            }
+        }
     }
 
     fun handleIntent(intent: Intent?) {
@@ -190,7 +198,8 @@ class TelemostTunnelController(private val appContext: Context) {
         try {
             appContext.stopService(Intent(appContext, TunnelForegroundService::class.java))
         } catch (_: Exception) {}
-        // Auto-upload log to Disk on stop
+        // Cancel periodic upload and do final upload
+        logUploadJob?.cancel()
         sendLogToDisk()
         diagnosticsJob?.cancel()
         scope.launch {
