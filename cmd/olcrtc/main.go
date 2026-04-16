@@ -372,18 +372,18 @@ func runWatchServer(ctx context.Context, cfg config) error {
 
 		record, err := rendezvous.FetchRoom(cfg.oauthToken)
 		if err != nil {
-			log.Printf("[WATCH-SRV] Fetch error: %v, retrying in 30s...", err)
+			log.Printf("[WATCH-SRV] Fetch error: %v, retrying in 10s...", err)
 			select {
-			case <-time.After(30 * time.Second):
+			case <-time.After(10 * time.Second):
 				continue
 			case <-ctx.Done():
 				return ctx.Err()
 			}
 		}
 		if record == nil || rendezvous.IsExpired(record) {
-			log.Println("[WATCH-SRV] No active room yet, polling in 30s...")
+			log.Println("[WATCH-SRV] No active room yet, polling in 10s...")
 			select {
-			case <-time.After(30 * time.Second):
+			case <-time.After(10 * time.Second):
 				continue
 			case <-ctx.Done():
 				return ctx.Err()
@@ -393,7 +393,7 @@ func runWatchServer(ctx context.Context, cfg config) error {
 		// Skip if same room already connected
 		if record.RoomID == lastRoomID {
 			select {
-			case <-time.After(30 * time.Second):
+			case <-time.After(10 * time.Second):
 				continue
 			case <-ctx.Done():
 				return ctx.Err()
