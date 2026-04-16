@@ -35,10 +35,20 @@ func (p *Program) settingsWindow() {
 		conferenceId.SetText(p.Config.ConferenceID)
 	}
 
+	oauthToken := widget.NewEntry()
+	if p.Config.OAuthToken != "" {
+		oauthToken.SetText(p.Config.OAuthToken)
+	}
+
+	masterSecret := widget.NewEntry()
+	if p.Config.MasterSecret != "" {
+		masterSecret.SetText(p.Config.MasterSecret)
+	}
+
 	applyBtn := widget.NewButtonWithIcon("Apply", theme.CheckButtonCheckedIcon(), func() {
 		log("Applying settings...")
-		p.buildRunString(conferenceId.Text, encrpKey.Text, socksPort.Text, dns.Text)
-		p.saveConfig(dns.Text, encrpKey.Text, socksPort.Text, conferenceId.Text)
+		p.buildRunString(conferenceId.Text, encrpKey.Text, socksPort.Text, dns.Text, masterSecret.Text)
+		p.saveConfig(dns.Text, encrpKey.Text, socksPort.Text, conferenceId.Text, oauthToken.Text, masterSecret.Text)
 	})
 
 	content := container.NewVBox(
@@ -50,12 +60,16 @@ func (p *Program) settingsWindow() {
 		socksPort,
 		widget.NewLabel("Conference ID"),
 		conferenceId,
+		widget.NewLabel("OAuth Token (Yandex Disk)"),
+		oauthToken,
+		widget.NewLabel("Master Secret"),
+		masterSecret,
 		applyBtn,
 	)
 	dialog.ShowCustom("Settings", "Close", content, p.ParentWindow)
 }
 
-func (p *Program) buildRunString(conferenceId, encryptionKey, socksPort, dns string) {
+func (p *Program) buildRunString(conferenceId, encryptionKey, socksPort, dns, masterSecret string) {
 	log("Building run string...")
 	log("  Conference ID: %s", conferenceId)
 	log("  Encryption Key: %s", encryptionKey)
@@ -63,11 +77,23 @@ func (p *Program) buildRunString(conferenceId, encryptionKey, socksPort, dns str
 	log("  DNS Server: %s", dns)
 	switch p.Config.Os {
 	case "windows":
-		p.RunString = fmt.Sprintf("olcrtc.exe -mode cnc -id \"%s\" -key \"%s\" -socks-port %s  -dns %s", conferenceId, encryptionKey, socksPort, dns)
+		if masterSecret != "" {
+			p.RunString = fmt.Sprintf("olcrtc.exe -mode cnc -id \"%s\" --master-secret \"%s\" --oauth-token \"%s\" -socks-port %s -dns %s", conferenceId, masterSecret, p.Config.OAuthToken, socksPort, dns)
+		} else {
+			p.RunString = fmt.Sprintf("olcrtc.exe -mode cnc -id \"%s\" -key \"%s\" -socks-port %s -dns %s", conferenceId, encryptionKey, socksPort, dns)
+		}
 	case "linux", "darwin":
-		p.RunString = fmt.Sprintf("./olcrtc -mode cnc -id \"%s\" -key \"%s\" -socks-port %s -dns %s", conferenceId, encryptionKey, socksPort, dns)
-	default: // in case for freeBSD and etc
-		p.RunString = fmt.Sprintf("olcrtc -mode cnc -id \"%s\" -key \"%s\" -socks-port %s -dns %s", conferenceId, encryptionKey, socksPort, dns)
+		if masterSecret != "" {
+			p.RunString = fmt.Sprintf("./olcrtc -mode cnc -id \"%s\" --master-secret \"%s\" --oauth-token \"%s\" -socks-port %s -dns %s", conferenceId, masterSecret, p.Config.OAuthToken, socksPort, dns)
+		} else {
+			p.RunString = fmt.Sprintf("./olcrtc -mode cnc -id \"%s\" -key \"%s\" -socks-port %s -dns %s", conferenceId, encryptionKey, socksPort, dns)
+		}
+	default:
+		if masterSecret != "" {
+			p.RunString = fmt.Sprintf("olcrtc -mode cnc -id \"%s\" --master-secret \"%s\" --oauth-token \"%s\" -socks-port %s -dns %s", conferenceId, masterSecret, p.Config.OAuthToken, socksPort, dns)
+		} else {
+			p.RunString = fmt.Sprintf("olcrtc -mode cnc -id \"%s\" -key \"%s\" -socks-port %s -dns %s", conferenceId, encryptionKey, socksPort, dns)
+		}
 	}
 	log("Generated command: %s", p.RunString)
 }

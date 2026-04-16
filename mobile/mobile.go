@@ -12,6 +12,7 @@ import (
 	"github.com/openlibrecommunity/olcrtc/internal/client"
 	"github.com/openlibrecommunity/olcrtc/internal/logger"
 	"github.com/openlibrecommunity/olcrtc/internal/protect"
+	"github.com/openlibrecommunity/olcrtc/internal/rendezvous"
 )
 
 // SocketProtector protects sockets from VPN routing on Android.
@@ -207,6 +208,51 @@ func IsRunning() bool {
 	mu.Lock()
 	defer mu.Unlock()
 	return cancel != nil
+}
+
+// PublishRoomToDisk publishes the current room to Yandex Disk for server discovery.
+// oauthToken: Yandex OAuth token with disk:app_folder scope
+// roomID: Telemost room ID
+// masterSecret: shared secret (not uploaded, only used locally for key derivation)
+// expireHours: how long the room record is valid
+func PublishRoomToDisk(oauthToken, roomID string, expireHours int) error {
+	if oauthToken == "" || roomID == "" {
+		return errors.New("oauthToken and roomID are required")
+	}
+
+	record := &rendezvous.RoomRecord{
+		RoomID:    roomID,
+		RoomURL:   "https://telemost.yandex.ru/j/" + roomID,
+		CreatedAt: time.Now().Format(time.RFC3339),
+		ExpiresAt: time.Now().Add(time.Duration(expireHours) * time.Hour).Format(time.RFC3339),
+		Version:   1,
+	}
+
+	return rendezvous.PublishRoom(oauthToken, record)
+}
+
+// FetchRoomFromDisk reads the active room record from Yandex Disk.
+// Returns room ID string, or empty string if no room published.
+func FetchRoomFromDisk(oauthToken string) (string, error) {
+	if oauthToken == "" {
+		return "", errors.New("oauthToken is required")
+	}
+
+	record, err := rendezvous.FetchRoom(oauthToken)
+	if err != nil {
+		return "", err
+	}
+	if record == nil {
+		return "", nil
+	}
+
+	return record.RoomID, nil
+}
+
+// DeriveKeyFromSecret computes deterministic encryption key from master secret + room ID.
+// Returns 64-char hex string. Both client and server compute the same key.
+func DeriveKeyFromSecret(masterSecret, roomID string) string {
+	return rendezvous.DeriveKey(masterSecret, roomID)
 }
 
 // logBridge adapts LogWriter to io.Writer for log package.

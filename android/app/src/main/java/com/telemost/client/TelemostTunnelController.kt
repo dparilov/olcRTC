@@ -80,6 +80,38 @@ class TelemostTunnelController(private val appContext: Context) {
         appendLog("SOCKS port updated to $port")
     }
 
+    fun getOAuthToken(): String = prefs.getString("oauth_token", "") ?: ""
+
+    fun setOAuthToken(token: String) {
+        prefs.edit().putString("oauth_token", token).apply()
+        appendLog("OAuth token updated")
+    }
+
+    fun getMasterSecret(): String = prefs.getString("master_secret", "") ?: ""
+
+    fun setMasterSecret(secret: String) {
+        prefs.edit().putString("master_secret", secret).apply()
+        appendLog("Master secret updated")
+    }
+
+    fun publishRoomToDisk() {
+        val token = getOAuthToken()
+        val roomId = _meeting.value
+        if (token.isBlank() || roomId.isBlank()) {
+            appendLog("Cannot publish: OAuth token or room ID missing")
+            return
+        }
+        scope.launch {
+            try {
+                Mobile.publishRoomToDisk(token, roomId, 3)
+                appendLog("Room $roomId published to Yandex Disk")
+                _status.value = "Published to Disk"
+            } catch (t: Throwable) {
+                appendLog("Disk publish failed: ${t.message}")
+            }
+        }
+    }
+
     fun stopTunnel() {
         diagnosticsJob?.cancel()
         scope.launch {
@@ -140,7 +172,12 @@ class TelemostTunnelController(private val appContext: Context) {
 
         scope.launch {
             try {
-                val keyHex = getKeyHex()
+                val masterSecret = getMasterSecret()
+                val keyHex = if (masterSecret.isNotBlank()) {
+                    Mobile.deriveKeyFromSecret(masterSecret, roomId)
+                } else {
+                    getKeyHex()
+                }
                 val socksPort = getSocksPort()
                 Mobile.start(roomId, keyHex, socksPort.toLong(), false, "", "")
                 _status.value = "Connecting to Telemost"

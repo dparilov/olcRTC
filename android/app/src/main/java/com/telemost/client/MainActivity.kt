@@ -90,9 +90,29 @@ private fun MainScreen(controller: TelemostTunnelController) {
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true
             )
+
+            var oauthToken by remember { mutableStateOf(controller.getOAuthToken()) }
+            var masterSecret by remember { mutableStateOf(controller.getMasterSecret()) }
+
+            OutlinedTextField(
+                value = oauthToken,
+                onValueChange = { oauthToken = it },
+                label = { Text("OAuth Token (Yandex Disk)") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true
+            )
+            OutlinedTextField(
+                value = masterSecret,
+                onValueChange = { masterSecret = it },
+                label = { Text("Master Secret") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true
+            )
             Button(onClick = {
                 controller.setKeyHex(keyHex)
                 socksPort.toIntOrNull()?.let { controller.setSocksPort(it) }
+                controller.setOAuthToken(oauthToken)
+                controller.setMasterSecret(masterSecret)
             }) {
                 Text("Save Settings")
             }
@@ -104,6 +124,9 @@ private fun MainScreen(controller: TelemostTunnelController) {
             }
             Button(onClick = { controller.stopTunnel() }) {
                 Text("Stop")
+            }
+            Button(onClick = { controller.publishRoomToDisk() }) {
+                Text("Publish")
             }
         }
 

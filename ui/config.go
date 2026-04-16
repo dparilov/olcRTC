@@ -12,10 +12,12 @@ import (
 
 type Config struct {
 	Os            string
-	DNS           string `json:"dns"` // todo
+	DNS           string `json:"dns"`
 	EncryptionKey string `json:"encryption_key"`
 	SocksPort     string `json:"socks_port"`
 	ConferenceID  string `json:"conference_id"`
+	OAuthToken    string `json:"oauth_token"`
+	MasterSecret  string `json:"master_secret"`
 }
 
 func isValidPort(portStr string) bool {
@@ -92,7 +94,7 @@ func (p *Program) loadConfig() *Config {
 	return cfg
 }
 
-func (p *Program) saveConfig(dns, encryptionKey, socksPort, conferenceID string) {
+func (p *Program) saveConfig(dns, encryptionKey, socksPort, conferenceID, oauthToken, masterSecret string) {
 	log("Saving configuration...")
 
 	conferenceID = strings.ReplaceAll(conferenceID, " ", "")
@@ -114,6 +116,8 @@ func (p *Program) saveConfig(dns, encryptionKey, socksPort, conferenceID string)
 		EncryptionKey: encryptionKey,
 		SocksPort:     socksPort,
 		ConferenceID:  conferenceID,
+		OAuthToken:    oauthToken,
+		MasterSecret:  masterSecret,
 	}
 
 	configPath := p.getConfigPath()
