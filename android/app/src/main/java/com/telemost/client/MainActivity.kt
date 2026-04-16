@@ -71,7 +71,7 @@ private fun MainScreen(controller: TelemostTunnelController) {
         var socksPort by remember { mutableStateOf(controller.getSocksPort().toString()) }
         var oauthToken by remember { mutableStateOf(controller.getOAuthToken()) }
         var masterSecret by remember { mutableStateOf(controller.getMasterSecret()) }
-        var roomUrl by remember { mutableStateOf(controller.getRoomUrl()) }
+        var roomUrl by remember { mutableStateOf("") }
         var validationMsg by remember { mutableStateOf("") }
 
         // Secret status
