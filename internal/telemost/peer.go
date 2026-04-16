@@ -58,6 +58,8 @@ type Peer struct {
 	reconnecting    atomic.Bool
 	shuttingDown    atomic.Bool
 	telemetryActive atomic.Bool
+	lastPcSeq       int
+	slotsKey        int
 	hasVP8Track     atomic.Bool
 	ackMu           sync.Mutex
 	ackWaiters      map[string]chan struct{}

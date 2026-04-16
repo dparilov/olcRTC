@@ -125,7 +125,7 @@ func (p *Peer) handleSignaling() {
 				"setSlots": map[string]interface{}{
 					"slots":          []map[string]interface{}{{"width": 320, "height": 240}},
 					"audioSlotsCount": 1,
-					"key":            1,
+					"key":            p.slotsKey,
 					"nLastConfig":    map[string]interface{}{"nCount": 1, "showInSubgrid": false},
 				},
 			})
@@ -135,20 +135,29 @@ func (p *Peer) handleSignaling() {
 		}
 
 		// Handle upsertDescription — new participant joined the room.
-		// Re-send setSlots to get their VP8 track forwarded to us.
+		// Re-send setSlots AND request subscriber renegotiation to get their VP8 track.
 		if _, ok := msg["upsertDescription"]; ok {
+			p.slotsKey++
 			p.wsMu.Lock()
 			p.ws.WriteJSON(map[string]interface{}{
 				"uid": uuid.New().String(),
 				"setSlots": map[string]interface{}{
 					"slots":          []map[string]interface{}{{"width": 320, "height": 240}},
 					"audioSlotsCount": 1,
-					"key":            1,
+					"key":            p.slotsKey,
 					"nLastConfig":    map[string]interface{}{"nCount": 1, "showInSubgrid": false},
 				},
 			})
+			// Request subscriber SDP renegotiation — SFU should send new subscriberSdpOffer
+			// with the new participant's video track
+			p.ws.WriteJSON(map[string]interface{}{
+				"uid": uuid.New().String(),
+				"requestSubscriberOffer": map[string]interface{}{
+					"pcSeq": p.lastPcSeq,
+				},
+			})
 			p.wsMu.Unlock()
-			log.Println("[WS] setSlots re-sent on upsertDescription (new participant)")
+			log.Println("[WS] setSlots + requestSubscriberOffer sent on upsertDescription (new participant)")
 			p.sendAck(uid)
 		}
 
@@ -174,6 +183,7 @@ func (p *Peer) handleSignaling() {
 		if offer, ok := msg["subscriberSdpOffer"].(map[string]interface{}); ok {
 			sdp, _ := offer["sdp"].(string)
 			pcSeq, _ := offer["pcSeq"].(float64)
+			p.lastPcSeq = int(pcSeq)
 
 			// SDP debug: log subscriber offer m= lines from SFU
 			for _, line := range strings.Split(sdp, "\n") {
