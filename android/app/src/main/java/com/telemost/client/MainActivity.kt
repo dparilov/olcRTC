@@ -71,6 +71,7 @@ private fun MainScreen(controller: TelemostTunnelController) {
         var socksPort by remember { mutableStateOf(controller.getSocksPort().toString()) }
         var oauthToken by remember { mutableStateOf(controller.getOAuthToken()) }
         var masterSecret by remember { mutableStateOf(controller.getMasterSecret()) }
+        var roomUrl by remember { mutableStateOf(controller.getRoomUrl()) }
         var showSettings by remember { mutableStateOf(controller.getMasterSecret().isBlank()) }
         var validationMsg by remember { mutableStateOf("") }
 
@@ -111,6 +112,15 @@ private fun MainScreen(controller: TelemostTunnelController) {
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true
             )
+            Text("Telemost", style = MaterialTheme.typography.titleSmall)
+            OutlinedTextField(
+                value = roomUrl,
+                onValueChange = { roomUrl = it },
+                label = { Text("Room URL or link (optional)") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                placeholder = { Text("https://telemost.yandex.ru/j/...") }
+            )
             if (validationMsg.isNotBlank()) {
                 Text(validationMsg, color = MaterialTheme.colorScheme.error)
             }
@@ -127,6 +137,7 @@ private fun MainScreen(controller: TelemostTunnelController) {
                 socksPort.toIntOrNull()?.let { controller.setSocksPort(it) }
                 controller.setOAuthToken(oauthToken)
                 controller.setMasterSecret(masterSecret)
+                if (roomUrl.isNotBlank()) controller.setRoomUrl(roomUrl)
             }) {
                 Text("Save Settings")
             }

@@ -138,12 +138,36 @@ class TelemostTunnelController(private val appContext: Context) {
         appendLog("Master secret updated")
     }
 
+    fun getRoomUrl(): String = prefs.getString("room_url", "") ?: ""
+
+    fun setRoomUrl(url: String) {
+        prefs.edit().putString("room_url", url).apply()
+        val roomId = parseMeeting(url)
+        if (roomId != null) {
+            _meeting.value = roomId
+            appendLog("Room saved: $roomId")
+        }
+    }
+
     fun publishRoomToDisk() {
         val token = getOAuthToken()
         val secret = getMasterSecret()
-        val roomId = _meeting.value
-        if (token.isBlank() || roomId.isBlank()) {
-            appendLog("Cannot publish: OAuth token or room ID missing")
+        // Try current meeting first, then saved room URL
+        var roomId = _meeting.value
+        if (roomId.isBlank() || roomId == "No meeting link parsed yet") {
+            val saved = getRoomUrl()
+            val parsed = parseMeeting(saved)
+            if (parsed != null) {
+                roomId = parsed
+                _meeting.value = roomId
+            }
+        }
+        if (token.isBlank()) {
+            appendLog("Cannot publish: OAuth token missing. Save it in Settings first.")
+            return
+        }
+        if (roomId.isBlank() || roomId == "No meeting link parsed yet") {
+            appendLog("Cannot publish: Room ID missing. Paste a Telemost link or enter in Settings.")
             return
         }
         if (secret.isBlank()) {
@@ -224,7 +248,7 @@ class TelemostTunnelController(private val appContext: Context) {
                 val masterSecret = getMasterSecret()
                 if (masterSecret.isBlank()) {
                     _status.value = "Error"
-                    appendLog("Master secret is required. Configure it in Settings.")
+                    appendLog("Master secret is required. Open Settings, enter it, and press Save Settings.")
                     return@launch
                 }
                 val keyHex = Mobile.deriveKeyFromSecret(masterSecret, roomId)
