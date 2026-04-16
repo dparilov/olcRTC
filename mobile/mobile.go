@@ -210,14 +210,17 @@ func IsRunning() bool {
 	return cancel != nil
 }
 
-// PublishRoomToDisk publishes the current room to Yandex Disk for server discovery.
+// PublishRoomToDisk publishes a signed v2 room record to Yandex Disk for server discovery.
 // oauthToken: Yandex OAuth token with disk:app_folder scope
+// masterSecret: shared setup secret used to sign the room record (MUST NOT be empty)
 // roomID: Telemost room ID
-// masterSecret: shared secret (not uploaded, only used locally for key derivation)
 // expireHours: how long the room record is valid
-func PublishRoomToDisk(oauthToken, roomID string, expireHours int) error {
+func PublishRoomToDisk(oauthToken, masterSecret, roomID string, expireHours int) error {
 	if oauthToken == "" || roomID == "" {
 		return errors.New("oauthToken and roomID are required")
+	}
+	if masterSecret == "" {
+		return errors.New("masterSecret is required for signing room records")
 	}
 
 	record := &rendezvous.RoomRecord{
@@ -225,20 +228,29 @@ func PublishRoomToDisk(oauthToken, roomID string, expireHours int) error {
 		RoomURL:   "https://telemost.yandex.ru/j/" + roomID,
 		CreatedAt: time.Now().Format(time.RFC3339),
 		ExpiresAt: time.Now().Add(time.Duration(expireHours) * time.Hour).Format(time.RFC3339),
-		Version:   1,
+	}
+
+	// Sign the record with master secret (sets Version=2, KeyVersion, RecordID, Sig)
+	if err := rendezvous.SignRecord(record, masterSecret, 1); err != nil {
+		return errors.New("failed to sign room record: " + err.Error())
 	}
 
 	return rendezvous.PublishRoom(oauthToken, record)
 }
 
-// FetchRoomFromDisk reads the active room record from Yandex Disk.
+// FetchRoomFromDisk reads and verifies the active room record from Yandex Disk.
 // Returns room ID string, or empty string if no room published.
-func FetchRoomFromDisk(oauthToken string) (string, error) {
+// masterSecret: current master secret for signature verification
+// previousSecret: previous master secret (empty string if no rotation window)
+func FetchRoomFromDisk(oauthToken, masterSecret, previousSecret string) (string, error) {
 	if oauthToken == "" {
 		return "", errors.New("oauthToken is required")
 	}
+	if masterSecret == "" {
+		return "", errors.New("masterSecret is required for record verification")
+	}
 
-	record, err := rendezvous.FetchRoom(oauthToken)
+	record, _, err := rendezvous.FetchAndVerifyRoom(oauthToken, masterSecret, previousSecret)
 	if err != nil {
 		return "", err
 	}
