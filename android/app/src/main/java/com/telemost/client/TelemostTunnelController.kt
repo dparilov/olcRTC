@@ -107,14 +107,15 @@ class TelemostTunnelController(private val appContext: Context) {
     }
 
     fun launchFromClipboard() {
-        val roomId = resolveMeetingFromClipboardOrIntent()
+        // Use saved room URL from settings (not clipboard)
+        val savedRoom = getRoomUrl()
+        val roomId = if (savedRoom.isNotBlank()) parseMeeting(savedRoom) else null
         if (roomId == null) {
-            _status.value = "Meeting link not found"
-            _meeting.value = "Clipboard/intent does not contain a Telemost invite"
-            appendLog("No valid Telemost link/id found in clipboard or launch intent")
+            _status.value = "Room URL not set"
+            appendLog("Enter Telemost room URL in the Room URL field and press Publish first")
             return
         }
-
+        _meeting.value = roomId
         launchTunnel(roomId)
     }
 
