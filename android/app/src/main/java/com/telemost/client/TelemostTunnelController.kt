@@ -163,6 +163,73 @@ class TelemostTunnelController(private val appContext: Context) {
 
     fun getRoomUrl(): String = prefs.getString("room_url", "") ?: ""
 
+    fun getServerEndpoint(): String = prefs.getString("server_endpoint", "") ?: ""
+    fun setServerEndpoint(endpoint: String) {
+        prefs.edit().putString("server_endpoint", endpoint).apply()
+    }
+
+    /**
+     * Send signed room intent to server via direct API.
+     * Returns record_id on success, null on failure.
+     */
+    private fun sendRoomIntent(endpoint: String, intentJson: String): String? {
+        try {
+            val url = java.net.URL("$endpoint/api/room-intent")
+            val conn = url.openConnection() as java.net.HttpURLConnection
+            conn.requestMethod = "POST"
+            conn.setRequestProperty("Content-Type", "application/json")
+            conn.connectTimeout = 15_000
+            conn.readTimeout = 15_000
+            conn.doOutput = true
+            conn.outputStream.use { it.write(intentJson.toByteArray()) }
+
+            val code = conn.responseCode
+            val body = try {
+                conn.inputStream.bufferedReader().readText()
+            } catch (_: Exception) {
+                conn.errorStream?.bufferedReader()?.readText() ?: ""
+            }
+
+            appendLog("[API] POST /api/room-intent -> $code")
+            if (code in 200..299) {
+                val json = org.json.JSONObject(body)
+                val status = json.optString("status", "")
+                val recordId = json.optString("record_id", "")
+                appendLog("[API] Server: status=$status record_id=${recordId.take(8)}")
+                return recordId
+            } else {
+                val json = try { org.json.JSONObject(body) } catch (_: Exception) { null }
+                val msg = json?.optString("message", body) ?: body
+                appendLog("[API] Server rejected: $code $msg")
+                return null
+            }
+        } catch (t: Throwable) {
+            appendLog("[API] Direct API failed: ${t.message}")
+            return null
+        }
+    }
+
+    /**
+     * Poll room intent status from server.
+     * Returns status string (accepted/starting/ready/failed/unknown).
+     */
+    private fun pollIntentStatus(endpoint: String, recordId: String): String {
+        try {
+            val url = java.net.URL("$endpoint/api/room-intent/$recordId")
+            val conn = url.openConnection() as java.net.HttpURLConnection
+            conn.requestMethod = "GET"
+            conn.connectTimeout = 10_000
+            conn.readTimeout = 10_000
+
+            val body = conn.inputStream.bufferedReader().readText()
+            val json = org.json.JSONObject(body)
+            return json.optString("status", "unknown")
+        } catch (t: Throwable) {
+            appendLog("[API] Poll failed: ${t.message}")
+            return "unknown"
+        }
+    }
+
     fun setRoomUrl(url: String) {
         prefs.edit().putString("room_url", url).apply()
         val roomId = parseMeeting(url)
@@ -202,13 +269,47 @@ class TelemostTunnelController(private val appContext: Context) {
                 // Save room URL so Launch Manual works after Stop
                 setRoomUrl("https://telemost.yandex.ru/j/$roomId")
 
-                // Publish to Disk if OAuth token available
-                if (token.isNotBlank() && secret.isNotBlank()) {
-                    appendLog("Publishing room $roomId to Disk...")
+                // Deliver room intent: API first, Disk fallback
+                val endpoint = getServerEndpoint()
+                val intentJson = Mobile.buildSignedRoomIntent(secret, roomId, 3L)
+                var intentDelivered = false
+
+                if (endpoint.isNotBlank()) {
+                    appendLog("Sending room intent to $endpoint...")
+                    _status.value = "Sending intent to server..."
+                    val recordId = sendRoomIntent(endpoint, intentJson)
+                    if (recordId != null) {
+                        appendLog("Server accepted room intent")
+                        _status.value = "Server accepted, starting..."
+                        // Poll for ready status (up to 30s)
+                        for (i in 1..15) {
+                            kotlinx.coroutines.delay(2000)
+                            val status = pollIntentStatus(endpoint, recordId)
+                            appendLog("[API] Poll: $status")
+                            if (status == "ready") {
+                                appendLog("Server ready")
+                                _status.value = "Server ready"
+                                break
+                            }
+                            if (status == "failed") {
+                                appendLog("Server failed to start room")
+                                break
+                            }
+                        }
+                        intentDelivered = true
+                    } else {
+                        appendLog("Direct API unavailable, trying fallback...")
+                    }
+                }
+
+                if (!intentDelivered && token.isNotBlank() && secret.isNotBlank()) {
+                    appendLog("Fallback: publishing room $roomId to Disk...")
+                    _status.value = "Fallback delivery via Yandex Disk..."
                     mobile.Mobile.publishRoomToDisk(token, secret, roomId, 3)
                     appendLog("Room $roomId published to Disk")
-                } else {
-                    appendLog("Skipping Disk publish (no OAuth token)")
+                    intentDelivered = true
+                } else if (!intentDelivered) {
+                    appendLog("WARNING: No delivery path available (no API endpoint, no OAuth token)")
                 }
 
                 // Launch tunnel — launchTunnel manages status through to "Connected — IP: ..."
@@ -252,6 +353,97 @@ class TelemostTunnelController(private val appContext: Context) {
                 if (!isTunnelReady()) _status.value = "Published to Disk"
             } catch (t: Throwable) {
                 appendLog("Disk publish failed: ${t.message}")
+            }
+        }
+    }
+
+    /**
+     * Start Server: send room intent to server without starting local tunnel.
+     * Uses current room from Room URL / parsed meeting.
+     */
+    fun startServer() {
+        val secret = getMasterSecret()
+        if (secret.isBlank()) {
+            appendLog("Cannot start server: Master secret required")
+            _status.value = "Secret required"
+            return
+        }
+        var roomId = _meeting.value
+        if (roomId.isBlank() || roomId == "No meeting link parsed yet") {
+            val saved = getRoomUrl()
+            val parsed = parseMeeting(saved)
+            if (parsed != null) { roomId = parsed; _meeting.value = roomId }
+        }
+        if (roomId.isBlank() || roomId == "No meeting link parsed yet") {
+            appendLog("Cannot start server: Room URL required")
+            _status.value = "Room URL required"
+            return
+        }
+        scope.launch {
+            try {
+                val intentJson = Mobile.buildSignedRoomIntent(secret, roomId, 3L)
+                val endpoint = getServerEndpoint()
+                var delivered = false
+
+                if (endpoint.isNotBlank()) {
+                    _status.value = "Sending intent to server..."
+                    val recordId = sendRoomIntent(endpoint, intentJson)
+                    if (recordId != null) {
+                        appendLog("Server accepted room intent")
+                        _status.value = "Server accepted"
+                        delivered = true
+                    } else {
+                        appendLog("Direct server path unavailable")
+                    }
+                }
+
+                if (!delivered) {
+                    val token = getOAuthToken()
+                    if (token.isNotBlank()) {
+                        _status.value = "Fallback delivery via Yandex Disk..."
+                        Mobile.publishRoomToDisk(token, secret, roomId, 3)
+                        appendLog("Room $roomId published to Disk (fallback)")
+                        _status.value = "Published to Disk"
+                    } else {
+                        appendLog("No delivery path: set Server Endpoint or OAuth Token")
+                        _status.value = "No delivery path available"
+                    }
+                }
+            } catch (t: Throwable) {
+                appendLog("Start server failed: ${t.message}")
+                _status.value = "Error: ${t.message}"
+            }
+        }
+    }
+
+    /**
+     * Connect Client: start local tunnel using current room + derived key.
+     * Does not send server bootstrap intent.
+     */
+    fun connectClient() {
+        val secret = getMasterSecret()
+        if (secret.isBlank()) {
+            appendLog("Cannot connect: Master secret required")
+            _status.value = "Secret required"
+            return
+        }
+        var roomId = _meeting.value
+        if (roomId.isBlank() || roomId == "No meeting link parsed yet") {
+            val saved = getRoomUrl()
+            val parsed = parseMeeting(saved)
+            if (parsed != null) { roomId = parsed; _meeting.value = roomId }
+        }
+        if (roomId.isBlank() || roomId == "No meeting link parsed yet") {
+            appendLog("Cannot connect: Room URL required")
+            _status.value = "Room URL required"
+            return
+        }
+        scope.launch {
+            try {
+                launchTunnel(roomId)
+            } catch (t: Throwable) {
+                appendLog("Connect client failed: ${t.message}")
+                _status.value = "Error: ${t.message}"
             }
         }
     }

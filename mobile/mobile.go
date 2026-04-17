@@ -4,7 +4,9 @@ package mobile
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"sync"
 	"time"
@@ -276,6 +278,36 @@ func CreateRoom(cookies string) (string, error) {
 // Returns 64-char hex string. Both client and server compute the same key.
 func DeriveKeyFromSecret(masterSecret, roomID string) string {
 	return rendezvous.DeriveKey(masterSecret, roomID)
+}
+
+// BuildSignedRoomIntent creates a signed room intent JSON payload.
+// This is the canonical contract used by both direct API and Disk fallback.
+// Returns JSON string ready to POST to /api/room-intent.
+func BuildSignedRoomIntent(masterSecret, roomID string, expireHours int) (string, error) {
+	if masterSecret == "" {
+		return "", errors.New("masterSecret is required for signing")
+	}
+	if roomID == "" {
+		return "", errors.New("roomID is required")
+	}
+
+	record := &rendezvous.RoomRecord{
+		RoomID:    roomID,
+		RoomURL:   "https://telemost.yandex.ru/j/" + roomID,
+		CreatedAt: time.Now().Format(time.RFC3339),
+		ExpiresAt: time.Now().Add(time.Duration(expireHours) * time.Hour).Format(time.RFC3339),
+	}
+
+	if err := rendezvous.SignRecord(record, masterSecret, 1); err != nil {
+		return "", fmt.Errorf("sign record: %w", err)
+	}
+
+	data, err := json.Marshal(record)
+	if err != nil {
+		return "", fmt.Errorf("marshal: %w", err)
+	}
+
+	return string(data), nil
 }
 
 // logBridge adapts LogWriter to io.Writer for log package.
