@@ -114,7 +114,7 @@ func (p *Peer) Connect(ctx context.Context) error {
 	if audioErr != nil {
 		return fmt.Errorf("create audio track: %w", audioErr)
 	}
-	if _, err = p.pcPub.AddTrack(audioTrack); err != nil {
+	if _, err = p.pcPub.AddTransceiverFromTrack(audioTrack, webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionSendonly}); err != nil {
 		return fmt.Errorf("add audio track: %w", err)
 	}
 
@@ -128,7 +128,7 @@ func (p *Peer) Connect(ctx context.Context) error {
 	}
 	p.sampleTrack = sampleTrack
 	p.vp8Sender = NewVP8Sender(sampleTrack, 25)
-	if _, err = p.pcPub.AddTrack(sampleTrack); err != nil {
+	if _, err = p.pcPub.AddTransceiverFromTrack(sampleTrack, webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionSendonly}); err != nil {
 		return fmt.Errorf("add video track: %w", err)
 	}
 

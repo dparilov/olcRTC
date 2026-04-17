@@ -59,8 +59,15 @@ type Peer struct {
 	shuttingDown    atomic.Bool
 	telemetryActive atomic.Bool
 	lastPcSeq       int
+	pubSeq          int
 	slotsKey        int
 	hasVP8Track     atomic.Bool
+	// ICE candidate buffering (kulikov0 pattern)
+	iceMu           sync.Mutex
+	pubRemoteSet    bool
+	subRemoteSet    bool
+	pubPending      []webrtc.ICECandidateInit
+	subPending      []webrtc.ICECandidateInit
 	ackMu           sync.Mutex
 	ackWaiters      map[string]chan struct{}
 	onEnded         func(string)

@@ -72,9 +72,74 @@ func (p *Peer) sendHello() error {
 	return p.ws.WriteJSON(hello)
 }
 
-func (p *Peer) handleSignaling() {
-	pubSent := false
+// sendPubOffer creates a fresh publisher SDP offer and sends it to SFU.
+// Called on every subscriberSdpOffer (not just the first) per kulikov0 pattern.
+func (p *Peer) sendPubOffer() {
+	pubOffer, err := p.pcPub.CreateOffer(nil)
+	if err != nil {
+		log.Printf("[PUB-OFFER] CreateOffer error: %v", err)
+		return
+	}
+	if err := p.pcPub.SetLocalDescription(pubOffer); err != nil {
+		log.Printf("[PUB-OFFER] SetLocalDescription error: %v", err)
+		return
+	}
 
+	// SDP debug: log m= lines
+	for _, line := range strings.Split(pubOffer.SDP, "\n") {
+		if strings.HasPrefix(line, "m=") || strings.HasPrefix(line, "a=sendrecv") || strings.HasPrefix(line, "a=sendonly") || strings.HasPrefix(line, "a=recvonly") || strings.HasPrefix(line, "a=inactive") {
+			log.Printf("[SDP-PUB-OFFER] %s", strings.TrimSpace(line))
+		}
+	}
+
+	// Parse mids for track metadata (required by SFU)
+	audioMid, videoMid := parseMids(pubOffer.SDP)
+	var tracks []map[string]interface{}
+	if audioMid != "" {
+		tracks = append(tracks, map[string]interface{}{"mid": audioMid, "transceiverMid": audioMid, "kind": "AUDIO", "priority": 0, "label": "", "codecs": map[string]interface{}{}, "groupId": 1, "description": ""})
+	}
+	if videoMid != "" {
+		tracks = append(tracks, map[string]interface{}{"mid": videoMid, "transceiverMid": videoMid, "kind": "VIDEO", "priority": 0, "label": "", "codecs": map[string]interface{}{}, "groupId": 2, "description": ""})
+	}
+
+	p.pubSeq++
+	log.Printf("[PUB-OFFER] audioMid=%s videoMid=%s tracks=%d pcSeq=%d", audioMid, videoMid, len(tracks), p.pubSeq)
+
+	// Reset pub remote set — new offer invalidates previous answer
+	p.iceMu.Lock()
+	p.pubRemoteSet = false
+	p.pubPending = nil
+	p.iceMu.Unlock()
+
+	p.wsMu.Lock()
+	p.ws.WriteJSON(map[string]interface{}{
+		"uid": uuid.New().String(),
+		"publisherSdpOffer": map[string]interface{}{
+			"pcSeq": p.pubSeq,
+			"sdp":   pubOffer.SDP,
+			"tracks": tracks,
+		},
+	})
+	p.wsMu.Unlock()
+}
+
+// requestVideoSlots sends setSlots to SFU for VP8 track forwarding.
+func (p *Peer) requestVideoSlots() {
+	p.wsMu.Lock()
+	p.ws.WriteJSON(map[string]interface{}{
+		"uid": uuid.New().String(),
+		"setSlots": map[string]interface{}{
+			"slots":          []map[string]interface{}{{"width": 320, "height": 240}},
+			"audioSlotsCount": 1,
+			"key":            1,
+			"nLastConfig":    map[string]interface{}{"nCount": 1, "showInSubgrid": false},
+		},
+	})
+	p.wsMu.Unlock()
+	log.Println("[WS] -> setSlots")
+}
+
+func (p *Peer) handleSignaling() {
 	for {
 		var msg map[string]interface{}
 		if err := p.ws.ReadJSON(&msg); err != nil {
@@ -116,48 +181,32 @@ func (p *Peer) handleSignaling() {
 			p.sendAck(uid)
 		}
 
-		if _, ok := msg["updateDescription"]; ok {
-			// Re-request video slots when participants change — SFU needs
-			// a fresh setSlots to start forwarding a new peer's VP8 track.
-			p.wsMu.Lock()
-			p.ws.WriteJSON(map[string]interface{}{
-				"uid": uuid.New().String(),
-				"setSlots": map[string]interface{}{
-					"slots":          []map[string]interface{}{{"width": 320, "height": 240}},
-					"audioSlotsCount": 1,
-					"key":            p.slotsKey,
-					"nLastConfig":    map[string]interface{}{"nCount": 1, "showInSubgrid": false},
-				},
-			})
-			p.wsMu.Unlock()
-			log.Println("[WS] setSlots re-sent on updateDescription")
+		// updateDescription / upsertDescription — just ACK.
+		// kulikov0 pattern: don't send extra setSlots or requestSubscriberOffer here.
+		// SFU will send a new subscriberSdpOffer if renegotiation is needed.
+		if ud, ok := msg["upsertDescription"].(map[string]interface{}); ok {
+			if descs, ok := ud["description"].([]interface{}); ok {
+				for _, d := range descs {
+					if dm, ok := d.(map[string]interface{}); ok {
+						pid, _ := dm["id"].(string)
+						if pid != "" && pid != p.conn.PeerID {
+							name := ""
+							if meta, ok := dm["meta"].(map[string]interface{}); ok {
+								name, _ = meta["name"].(string)
+							}
+							log.Printf("[WS] Participant joined: %s (%s)", name, pid)
+						}
+					}
+				}
+			}
 			p.sendAck(uid)
 		}
 
-		// Handle upsertDescription — new participant joined the room.
-		// Re-send setSlots AND request subscriber renegotiation to get their VP8 track.
-		if _, ok := msg["upsertDescription"]; ok {
-			p.slotsKey++
-			p.wsMu.Lock()
-			p.ws.WriteJSON(map[string]interface{}{
-				"uid": uuid.New().String(),
-				"setSlots": map[string]interface{}{
-					"slots":          []map[string]interface{}{{"width": 320, "height": 240}},
-					"audioSlotsCount": 1,
-					"key":            p.slotsKey,
-					"nLastConfig":    map[string]interface{}{"nCount": 1, "showInSubgrid": false},
-				},
-			})
-			// Request subscriber SDP renegotiation — SFU should send new subscriberSdpOffer
-			// with the new participant's video track
-			p.ws.WriteJSON(map[string]interface{}{
-				"uid": uuid.New().String(),
-				"requestSubscriberOffer": map[string]interface{}{
-					"pcSeq": p.lastPcSeq,
-				},
-			})
-			p.wsMu.Unlock()
-			log.Println("[WS] setSlots + requestSubscriberOffer sent on upsertDescription (new participant)")
+		if _, ok := msg["updateDescription"]; ok {
+			p.sendAck(uid)
+		}
+
+		if _, ok := msg["removeDescription"]; ok {
 			p.sendAck(uid)
 		}
 
@@ -191,6 +240,12 @@ func (p *Peer) handleSignaling() {
 					log.Printf("[SDP-SUB-OFFER] %s", strings.TrimSpace(line))
 				}
 			}
+
+			// Mark sub remote as set BEFORE SetRemoteDescription so buffered ICE can flush
+			p.iceMu.Lock()
+			p.subRemoteSet = false // reset first
+			p.iceMu.Unlock()
+
 			if err := p.pcSub.SetRemoteDescription(webrtc.SessionDescription{
 				Type: webrtc.SDPTypeOffer,
 				SDP:  sdp,
@@ -198,6 +253,15 @@ func (p *Peer) handleSignaling() {
 				log.Printf("SetRemoteDescription error: %v", err)
 				continue
 			}
+
+			// Now flush buffered sub ICE candidates
+			p.iceMu.Lock()
+			p.subRemoteSet = true
+			for _, cand := range p.subPending {
+				p.pcSub.AddICECandidate(cand)
+			}
+			p.subPending = nil
+			p.iceMu.Unlock()
 
 			answer, err := p.pcSub.CreateAnswer(nil)
 			if err != nil {
@@ -210,11 +274,12 @@ func (p *Peer) handleSignaling() {
 				continue
 			}
 
+			log.Printf("[WS] -> subscriberSdpAnswer pcSeq=%d", p.lastPcSeq)
 			p.wsMu.Lock()
 			p.ws.WriteJSON(map[string]interface{}{
 				"uid": uuid.New().String(),
 				"subscriberSdpAnswer": map[string]interface{}{
-					"pcSeq": int(pcSeq),
+					"pcSeq": p.lastPcSeq,
 					"sdp":   answer.SDP,
 				},
 			})
@@ -222,98 +287,10 @@ func (p *Peer) handleSignaling() {
 
 			p.sendAck(uid)
 
-			if !pubSent {
-			time.Sleep(300 * time.Millisecond)
-
-			pubOffer, err := p.pcPub.CreateOffer(nil)
-			if err != nil {
-				log.Printf("CreateOffer error: %v", err)
-				continue
-			}
-			for _, line := range strings.Split(pubOffer.SDP, "\n") {
-				if strings.HasPrefix(line, "m=") || strings.HasPrefix(line, "a=sendrecv") || strings.HasPrefix(line, "a=sendonly") || strings.HasPrefix(line, "a=recvonly") || strings.HasPrefix(line, "a=inactive") {
-					log.Printf("[SDP-PUB-OFFER] %s", strings.TrimSpace(line))
-				}
-			}
-			// SDP debug: log m= lines to verify video is included
-			for _, line := range strings.Split(pubOffer.SDP, "\n") {
-				if strings.HasPrefix(line, "m=") || strings.HasPrefix(line, "a=sendrecv") || strings.HasPrefix(line, "a=sendonly") || strings.HasPrefix(line, "a=recvonly") || strings.HasPrefix(line, "a=inactive") {
-					log.Printf("[SDP-PUB-OFFER] %s", strings.TrimSpace(line))
-				}
-			}
-
-			if err := p.pcPub.SetLocalDescription(pubOffer); err != nil {
-				log.Printf("SetLocalDescription error: %v", err)
-				continue
-			}
-
-			// Parse mids for track metadata (required by SFU)
-			audioMid, videoMid := parseMids(pubOffer.SDP)
-			var tracks []map[string]interface{}
-			if audioMid != "" {
-				tracks = append(tracks, map[string]interface{}{"mid": audioMid, "transceiverMid": audioMid, "kind": "AUDIO", "priority": 0, "label": "", "codecs": map[string]interface{}{}, "groupId": 1, "description": ""})
-			}
-			if videoMid != "" {
-				tracks = append(tracks, map[string]interface{}{"mid": videoMid, "transceiverMid": videoMid, "kind": "VIDEO", "priority": 0, "label": "", "codecs": map[string]interface{}{}, "groupId": 2, "description": ""})
-			}
-			log.Printf("[PUB-OFFER] audioMid=%s videoMid=%s tracks=%d", audioMid, videoMid, len(tracks))
-
-			p.wsMu.Lock()
-			p.ws.WriteJSON(map[string]interface{}{
-				"uid": uuid.New().String(),
-				"publisherSdpOffer": map[string]interface{}{
-					"pcSeq": 1,
-					"sdp":   pubOffer.SDP,
-					"tracks": tracks,
-				},
-			})
-			p.wsMu.Unlock()
-
-			pubSent = true
-			} // end !pubSent
-
-			// Request video slots - SFU slot-based model for video forwarding
-			p.wsMu.Lock()
-			p.ws.WriteJSON(map[string]interface{}{
-				"uid": uuid.New().String(),
-				"setSlots": map[string]interface{}{
-					"slots": []map[string]interface{}{{"width": 320, "height": 240}},
-					"audioSlotsCount": 1,
-					"key": 1,
-					"nLastConfig": map[string]interface{}{"nCount": 1, "showInSubgrid": false},
-				},
-			})
-			p.wsMu.Unlock()
-			log.Println("[WS] setSlots sent")
-
-			// Periodic setSlots re-send until VP8 track is received
-			go func() {
-				ticker := time.NewTicker(10 * time.Second)
-				defer ticker.Stop()
-				for i := 0; i < 30; i++ {
-					select {
-					case <-ticker.C:
-						if p.hasVP8Track.Load() {
-							log.Println("[WS] VP8 track received, stopping periodic setSlots")
-							return
-						}
-						p.wsMu.Lock()
-						p.ws.WriteJSON(map[string]interface{}{
-							"uid": uuid.New().String(),
-							"setSlots": map[string]interface{}{
-								"slots":          []map[string]interface{}{{"width": 320, "height": 240}},
-								"audioSlotsCount": 1,
-								"key":            1,
-								"nLastConfig":    map[string]interface{}{"nCount": 1, "showInSubgrid": false},
-							},
-						})
-						p.wsMu.Unlock()
-						log.Println("[WS] setSlots periodic re-send (waiting for VP8 track)")
-					case <-p.closeCh:
-						return
-					}
-				}
-			}()
+			// Send publisher offer on EVERY subscriberSdpOffer (kulikov0 pattern).
+			// SFU needs a fresh pub offer to properly route VP8 tracks.
+			p.sendPubOffer()
+			p.requestVideoSlots()
 		}
 
 		if answer, ok := msg["publisherSdpAnswer"].(map[string]interface{}); ok {
@@ -325,16 +302,20 @@ func (p *Peer) handleSignaling() {
 					log.Printf("[SDP-PUB-ANSWER] %s", strings.TrimSpace(line))
 				}
 			}
-			for _, line := range strings.Split(sdp, "\n") {
-				if strings.HasPrefix(line, "m=") || strings.HasPrefix(line, "a=sendrecv") || strings.HasPrefix(line, "a=sendonly") || strings.HasPrefix(line, "a=recvonly") || strings.HasPrefix(line, "a=inactive") {
-					log.Printf("[SDP-PUB-ANSWER] %s", strings.TrimSpace(line))
-				}
-			}
 			if err := p.pcPub.SetRemoteDescription(webrtc.SessionDescription{
 				Type: webrtc.SDPTypeAnswer,
 				SDP:  sdp,
 			}); err != nil {
 				log.Printf("SetRemoteDescription error: %v", err)
+			} else {
+				// Flush buffered pub ICE candidates
+				p.iceMu.Lock()
+				p.pubRemoteSet = true
+				for _, cand := range p.pubPending {
+					p.pcPub.AddICECandidate(cand)
+				}
+				p.pubPending = nil
+				p.iceMu.Unlock()
 			}
 
 			p.sendAck(uid)
@@ -342,6 +323,12 @@ func (p *Peer) handleSignaling() {
 
 		if cand, ok := msg["webrtcIceCandidate"].(map[string]interface{}); ok {
 			p.handleICE(cand)
+			p.sendAck(uid)
+		}
+
+		// ACK anything else with a uid
+		if uid != "" {
+			p.sendAck(uid)
 		}
 	}
 }
@@ -363,9 +350,21 @@ func (p *Peer) handleICE(cand map[string]interface{}) {
 		SDPMLineIndex: func() *uint16 { v := uint16(sdpMLineIndex); return &v }(),
 	}
 
+	// Buffer ICE candidates until remote description is set (kulikov0 pattern)
+	p.iceMu.Lock()
+	defer p.iceMu.Unlock()
+
 	if target == "SUBSCRIBER" {
+		if !p.subRemoteSet {
+			p.subPending = append(p.subPending, init)
+			return
+		}
 		p.pcSub.AddICECandidate(init)
 	} else if target == "PUBLISHER" {
+		if !p.pubRemoteSet {
+			p.pubPending = append(p.pubPending, init)
+			return
+		}
 		p.pcPub.AddICECandidate(init)
 	}
 }
@@ -475,15 +474,24 @@ func (p *Peer) setupICEHandlers() {
 		}
 
 		init := c.ToJSON()
+		mid := ""
+		if init.SDPMid != nil {
+			mid = *init.SDPMid
+		}
+		var idx uint16
+		if init.SDPMLineIndex != nil {
+			idx = *init.SDPMLineIndex
+		}
 		p.wsMu.Lock()
 		p.ws.WriteJSON(map[string]interface{}{
 			"uid": uuid.New().String(),
 			"webrtcIceCandidate": map[string]interface{}{
-				"candidate":     init.Candidate,
-				"sdpMid":        init.SDPMid,
-				"sdpMlineIndex": init.SDPMLineIndex,
-				"target":        "SUBSCRIBER",
-				"pcSeq":         1,
+				"candidate":        init.Candidate,
+				"sdpMid":           mid,
+				"usernameFragment": extractUfrag(init.Candidate),
+				"sdpMlineIndex":    idx,
+				"target":           "SUBSCRIBER",
+				"pcSeq":            p.lastPcSeq,
 			},
 		})
 		p.wsMu.Unlock()
@@ -495,15 +503,24 @@ func (p *Peer) setupICEHandlers() {
 		}
 
 		init := c.ToJSON()
+		mid := ""
+		if init.SDPMid != nil {
+			mid = *init.SDPMid
+		}
+		var idx uint16
+		if init.SDPMLineIndex != nil {
+			idx = *init.SDPMLineIndex
+		}
 		p.wsMu.Lock()
 		p.ws.WriteJSON(map[string]interface{}{
 			"uid": uuid.New().String(),
 			"webrtcIceCandidate": map[string]interface{}{
-				"candidate":     init.Candidate,
-				"sdpMid":        init.SDPMid,
-				"sdpMlineIndex": init.SDPMLineIndex,
-				"target":        "PUBLISHER",
-				"pcSeq":         1,
+				"candidate":        init.Candidate,
+				"sdpMid":           mid,
+				"usernameFragment": extractUfrag(init.Candidate),
+				"sdpMlineIndex":    idx,
+				"target":           "PUBLISHER",
+				"pcSeq":            p.pubSeq,
 			},
 		})
 		p.wsMu.Unlock()
@@ -569,4 +586,15 @@ func parseMids(sdp string) (audioMid, videoMid string) {
 		}
 	}
 	return
+}
+
+// extractUfrag extracts the ICE username fragment from a candidate string.
+func extractUfrag(candidate string) string {
+	parts := strings.Split(candidate, " ")
+	for i, p := range parts {
+		if p == "ufrag" && i+1 < len(parts) {
+			return parts[i+1]
+		}
+	}
+	return ""
 }
