@@ -119,9 +119,6 @@ private fun MainScreen(controller: TelemostTunnelController, onLogin: () -> Unit
     val diagnostics by controller.diagnostics.collectAsState()
     val logs by controller.logs.collectAsState()
     val scrollState = rememberScrollState()
-    LaunchedEffect(logs) {
-        scrollState.animateScrollTo(scrollState.maxValue)
-    }
 
     Column(
         modifier = Modifier
