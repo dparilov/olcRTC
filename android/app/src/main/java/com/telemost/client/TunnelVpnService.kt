@@ -94,12 +94,27 @@ class TunnelVpnService : VpnService() {
             .setMtu(1500)
             .setBlocking(true)
 
-        // Exclude our own app from VPN to prevent routing loops
-        try {
-            builder.addDisallowedApplication(packageName)
-        } catch (e: Exception) {
-            log("Could not exclude own app: ${e.message}")
+        // Route only specific apps through VPN (allowlist mode)
+        // Using addAllowedApplication instead of addDisallowedApplication
+        // to avoid triggering network change events that kill our WebRTC tunnel
+        val vpnApps = listOf(
+            "com.android.chrome",           // Chrome
+            "com.chrome.beta",              // Chrome Beta
+            "org.mozilla.firefox",          // Firefox
+            "com.brave.browser",            // Brave
+            "com.opera.browser",            // Opera
+            "com.yandex.browser",           // Yandex Browser
+            "com.android.vending",          // Play Store
+            "com.google.android.youtube",   // YouTube
+        )
+        var addedCount = 0
+        for (app in vpnApps) {
+            try {
+                builder.addAllowedApplication(app)
+                addedCount++
+            } catch (_: Exception) { /* app not installed */ }
         }
+        log("VPN routing $addedCount apps (allowlist mode)")
 
         tunFd = builder.establish()
         if (tunFd == null) {
