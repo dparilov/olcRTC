@@ -55,6 +55,7 @@ object DiagnosticsRunner {
             readTimeout = 10_000
             requestMethod = "GET"
             setRequestProperty("User-Agent", "curl/7.0")
+            setRequestProperty("Accept", "text/plain")
         }
         conn.inputStream.use { stream ->
             return BufferedReader(InputStreamReader(stream)).readText().trim()

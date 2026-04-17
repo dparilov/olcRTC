@@ -452,6 +452,7 @@ class TelemostTunnelController(private val appContext: Context) {
                             conn.connectTimeout = 15000
                             conn.readTimeout = 15000
                             conn.setRequestProperty("User-Agent", "curl/7.0")
+                            conn.setRequestProperty("Accept", "text/plain")
                             val ip = conn.inputStream.bufferedReader().readText().trim()
                             conn.disconnect()
                             _status.value = "Connected — IP: $ip"
