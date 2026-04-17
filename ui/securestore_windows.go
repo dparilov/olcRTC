@@ -108,17 +108,17 @@ func loadSecrets() (masterSecret, oauthToken, yandexCookies string, err error) {
 	enc, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return "", "", nil // no secrets stored yet
+			return "", "", "", nil // no secrets stored yet
 		}
-		return "", "", err
+		return "", "", "", err
 	}
 	plain, err := dpapiDecrypt(enc)
 	if err != nil {
-		return "", "", fmt.Errorf("DPAPI decrypt: %w", err)
+		return "", "", "", fmt.Errorf("DPAPI decrypt: %w", err)
 	}
 	var d secretData
 	if err := json.Unmarshal(plain, &d); err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	return d.MasterSecret, d.OAuthToken, d.YandexCookies, nil
 }
