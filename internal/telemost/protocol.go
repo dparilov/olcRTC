@@ -1,6 +1,7 @@
 package telemost
 
 import (
+	"fmt"
 	"log"
 	"strings"
 	"time"
@@ -177,6 +178,9 @@ func (p *Peer) handleSignaling() {
 		}
 
 		if serverHello, ok := msg["serverHello"].(map[string]interface{}); ok {
+			// serverHello already handled by waitForServerHello() in Connect().
+			// This branch only fires on reconnect edge cases.
+			p.logServerHelloICE(serverHello)
 			p.startTelemetry(serverHello)
 			p.sendAck(uid)
 		}
@@ -586,6 +590,95 @@ func parseMids(sdp string) (audioMid, videoMid string) {
 		}
 	}
 	return
+}
+
+// waitForServerHello reads WS messages synchronously until serverHello arrives.
+// Returns ICE servers (including TURN with credentials) for PeerConnection creation.
+// ACKs and processes other messages that arrive before serverHello.
+func (p *Peer) waitForServerHello() ([]webrtc.ICEServer, error) {
+	for {
+		var msg map[string]interface{}
+		if err := p.ws.ReadJSON(&msg); err != nil {
+			return nil, fmt.Errorf("WS read waiting for serverHello: %w", err)
+		}
+
+		uid, _ := msg["uid"].(string)
+
+		if _, ok := msg["ack"]; ok {
+			p.resolveAck(uid)
+			continue
+		}
+
+		if _, ok := msg["ping"]; ok {
+			p.sendPong(uid)
+			continue
+		}
+
+		if serverHello, ok := msg["serverHello"].(map[string]interface{}); ok {
+			log.Println("[WS] <- serverHello")
+			p.logServerHelloICE(serverHello)
+			p.startTelemetry(serverHello)
+			p.sendAck(uid)
+			return p.extractICEServers(serverHello), nil
+		}
+
+		// ACK anything else that arrives before serverHello
+		if uid != "" {
+			p.sendAck(uid)
+		}
+	}
+}
+
+// extractICEServers parses ICE servers from serverHello rtcConfiguration.
+func (p *Peer) extractICEServers(sh map[string]interface{}) []webrtc.ICEServer {
+	rtcCfg, ok := sh["rtcConfiguration"].(map[string]interface{})
+	if !ok {
+		return nil
+	}
+	servers, ok := rtcCfg["iceServers"].([]interface{})
+	if !ok {
+		return nil
+	}
+	var iceServers []webrtc.ICEServer
+	for _, s := range servers {
+		sm, _ := s.(map[string]interface{})
+		var urls []string
+		if u, ok := sm["urls"].([]interface{}); ok {
+			for _, v := range u {
+				if vs, ok := v.(string); ok {
+					urls = append(urls, vs)
+				}
+			}
+		}
+		ice := webrtc.ICEServer{URLs: urls}
+		if u, ok := sm["username"].(string); ok && u != "" {
+			ice.Username = u
+			ice.Credential, _ = sm["credential"].(string)
+		}
+		iceServers = append(iceServers, ice)
+	}
+	return iceServers
+}
+
+// logServerHelloICE logs ICE servers from serverHello (may include TURN with credentials).
+func (p *Peer) logServerHelloICE(sh map[string]interface{}) {
+	rtcCfg, ok := sh["rtcConfiguration"].(map[string]interface{})
+	if !ok {
+		log.Println("[ICE] serverHello has no rtcConfiguration")
+		return
+	}
+	servers, ok := rtcCfg["iceServers"].([]interface{})
+	if !ok {
+		log.Println("[ICE] serverHello rtcConfiguration has no iceServers")
+		return
+	}
+	log.Printf("[ICE] serverHello contains %d ICE servers:", len(servers))
+	for i, s := range servers {
+		sm, _ := s.(map[string]interface{})
+		urls, _ := sm["urls"].([]interface{})
+		user, _ := sm["username"].(string)
+		log.Printf("[ICE]   [%d] urls=%v user=%s", i, urls, user)
+	}
 }
 
 // extractUfrag extracts the ICE username fragment from a candidate string.

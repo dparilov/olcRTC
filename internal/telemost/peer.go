@@ -70,6 +70,7 @@ type Peer struct {
 	subPending      []webrtc.ICECandidateInit
 	ackMu           sync.Mutex
 	ackWaiters      map[string]chan struct{}
+	serverHelloICE  chan []webrtc.ICEServer // TURN servers from serverHello
 	onEnded         func(string)
 	trafficShape    TrafficShape
 	sessionCloseCh  chan struct{}
@@ -123,6 +124,7 @@ func NewPeer(roomURL, name string, onData func([]byte)) (*Peer, error) {
 		telemetryCh:    make(chan struct{}, 1),
 		sendQueue:      make(chan []byte, 5000),
 		ackWaiters:     make(map[string]chan struct{}),
+		serverHelloICE: make(chan []webrtc.ICEServer, 1),
 		trafficShape: TrafficShape{
 			MaxMessageSize: realDataChannelMessageLimit,
 			MinDelay:       defaultSendDelayMin,

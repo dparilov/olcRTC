@@ -65,24 +65,56 @@ func (p *Peer) drainReconnectQueue() {
 func (p *Peer) Connect(ctx context.Context) error {
 	p.closed.Store(false)
 
-	config := webrtc.Configuration{
-		ICEServers: []webrtc.ICEServer{
+	// Step 1: Connect WebSocket and send hello FIRST.
+	// We need serverHello (which contains TURN credentials) before creating PeerConnections.
+	wsDialer := websocket.Dialer{
+		NetDialContext:   protect.DialContext,
+		HandshakeTimeout: 15 * time.Second,
+	}
+	ws, _, err := wsDialer.Dial(p.conn.ClientConfig.MediaServerURL, nil)
+	if err != nil {
+		return fmt.Errorf("WS dial: %w", err)
+	}
+	p.ws = ws
+	ws.SetPongHandler(func(string) error {
+		ws.SetReadDeadline(time.Now().Add(60 * time.Second))
+		return nil
+	})
+	ws.SetReadDeadline(time.Now().Add(60 * time.Second))
+
+	if err := p.sendHello(); err != nil {
+		return fmt.Errorf("sendHello: %w", err)
+	}
+
+	// Step 2: Wait for serverHello synchronously — get TURN servers.
+	iceServers, err := p.waitForServerHello()
+	if err != nil {
+		return fmt.Errorf("waitForServerHello: %w", err)
+	}
+
+	// Use TURN servers from serverHello, fall back to STUN.
+	if len(iceServers) == 0 {
+		iceServers = []webrtc.ICEServer{
 			{URLs: []string{"stun:stun.rtc.yandex.net:3478"}},
-		},
+		}
+		log.Println("[ICE] No servers from serverHello, fallback to STUN only")
+	} else {
+		log.Printf("[ICE] Using %d servers from serverHello (includes TURN)", len(iceServers))
+	}
+
+	// Step 3: Create PeerConnections WITH TURN servers.
+	config := webrtc.Configuration{
+		ICEServers:   iceServers,
 		SDPSemantics: webrtc.SDPSemanticsUnifiedPlan,
 	}
 
 	settingEngine := webrtc.SettingEngine{}
 	if protect.Protector != nil {
-		// Use socket-level protection instead of proxy dialer.
-		// SetICEProxyDialer forces TCP-only ICE, which blocks VP8 RTP over UDP.
-		// Instead, set net.Dialer Control function to protect each socket FD.
 		settingEngine.SetNet(protect.NewProtectedNet())
 	}
-	api := webrtc.NewAPI(webrtc.WithSettingEngine(settingEngine))
+	webrtcAPI := webrtc.NewAPI(webrtc.WithSettingEngine(settingEngine))
 
-	var err error
-	p.pcSub, err = api.NewPeerConnection(config)
+	p.pcSub, err = webrtcAPI.NewPeerConnection(config)
 	if err != nil {
 		return err
 	}
@@ -94,7 +126,7 @@ func (p *Peer) Connect(ctx context.Context) error {
 		}
 	})
 
-	p.pcPub, err = api.NewPeerConnection(config)
+	p.pcPub, err = webrtcAPI.NewPeerConnection(config)
 	if err != nil {
 		return err
 	}
@@ -303,32 +335,12 @@ func (p *Peer) Connect(ctx context.Context) error {
 		}
 	})
 
-	wsDialer := websocket.Dialer{
-		NetDialContext:   protect.DialContext,
-		HandshakeTimeout: 15 * time.Second,
-	}
-	ws, _, err := wsDialer.Dial(p.conn.ClientConfig.MediaServerURL, nil)
-	if err != nil {
-		return err
-	}
-	p.ws = ws
-
-	ws.SetPongHandler(func(string) error {
-		ws.SetReadDeadline(time.Now().Add(60 * time.Second))
-		return nil
-	})
-
-	ws.SetReadDeadline(time.Now().Add(60 * time.Second))
-
+	// Step 4: Start keepalive + signaling (WS already connected, hello already sent).
 	p.wg.Add(1)
 	go func() {
 		defer p.wg.Done()
 		p.keepAlive(keepAliveCh)
 	}()
-
-	if err := p.sendHello(); err != nil {
-		return err
-	}
 
 	p.setupICEHandlers()
 

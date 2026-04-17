@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 
@@ -89,8 +90,17 @@ type ConnectionInfo struct {
 	PeerID       string `json:"peer_id"`
 	Credentials  string `json:"credentials"`
 	ClientConfig struct {
-		MediaServerURL string `json:"media_server_url"`
+		MediaServerURL string            `json:"media_server_url"`
+		ServiceName    string            `json:"service_name"`
+		ICEServers     []ICEServerConfig `json:"ice_servers"`
 	} `json:"client_configuration"`
+}
+
+// ICEServerConfig mirrors the ICE server JSON from Telemost API.
+type ICEServerConfig struct {
+	URLs       []string `json:"urls"`
+	Username   string   `json:"username,omitempty"`
+	Credential string   `json:"credential,omitempty"`
 }
 
 func GetConnectionInfo(roomURL, displayName string) (*ConnectionInfo, error) {
@@ -131,6 +141,12 @@ func GetConnectionInfo(roomURL, displayName string) (*ConnectionInfo, error) {
 	var info ConnectionInfo
 	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
 		return nil, err
+	}
+
+	log.Printf("[API] room_id=%s peer_id=%s media_server=%s ice_servers=%d",
+		info.RoomID, info.PeerID, info.ClientConfig.MediaServerURL, len(info.ClientConfig.ICEServers))
+	for i, s := range info.ClientConfig.ICEServers {
+		log.Printf("[API]   ICE[%d]: urls=%v user=%s", i, s.URLs, s.Username)
 	}
 
 	return &info, nil
