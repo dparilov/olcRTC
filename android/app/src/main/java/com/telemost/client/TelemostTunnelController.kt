@@ -523,7 +523,7 @@ class TelemostTunnelController(private val appContext: Context) {
         return parts.firstOrNull()
     }
 
-    private fun appendLog(line: String) {
+    fun appendLog(line: String) {
         _logs.value += if (_logs.value.endsWith("\n")) "$line\n" else "\n$line\n"
     }
 

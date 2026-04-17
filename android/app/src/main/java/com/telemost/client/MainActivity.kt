@@ -55,6 +55,17 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Global crash catcher — logs to controller before process dies
+        val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, ex ->
+            try {
+                val trace = ex.stackTraceToString().take(2000)
+                controller.appendLog("[CRASH] ${ex.javaClass.simpleName}: ${ex.message}\n$trace")
+                // Give log upload a moment
+                Thread.sleep(2000)
+            } catch (_: Throwable) {}
+            defaultHandler?.uncaughtException(thread, ex)
+        }
         setContent {
             MaterialTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
@@ -62,11 +73,18 @@ class MainActivity : ComponentActivity() {
                     MainScreen(controller, onLogin = {
                         loginLauncher.launch(Intent(this@MainActivity, YandexLoginActivity::class.java))
                     }, onVpnRequest = {
-                        val prepareIntent = VpnService.prepare(this@MainActivity)
-                        if (prepareIntent != null) {
-                            vpnPermissionLauncher.launch(prepareIntent)
-                        } else {
-                            controller.startVpnService()
+                        try {
+                            controller.appendLog("[VPN] onVpnRequest: calling VpnService.prepare()")
+                            val prepareIntent = VpnService.prepare(this@MainActivity)
+                            if (prepareIntent != null) {
+                                controller.appendLog("[VPN] prepare() returned intent — launching permission dialog")
+                                vpnPermissionLauncher.launch(prepareIntent)
+                            } else {
+                                controller.appendLog("[VPN] prepare() = null — already granted, starting service")
+                                controller.startVpnService()
+                            }
+                        } catch (t: Throwable) {
+                            controller.appendLog("[VPN] CRASH in onVpnRequest: ${t.javaClass.simpleName}: ${t.message}")
                         }
                     })
                 }
@@ -225,11 +243,15 @@ private fun MainScreen(controller: TelemostTunnelController, onLogin: () -> Unit
             Switch(
                 checked = controller.isVpnMode(),
                 onCheckedChange = { enabled ->
-                    controller.setVpnMode(enabled)
-                    if (enabled) {
-                        onVpnRequest()
-                    } else {
-                        controller.stopVpnService()
+                    try {
+                        controller.setVpnMode(enabled)
+                        if (enabled) {
+                            onVpnRequest()
+                        } else {
+                            controller.stopVpnService()
+                        }
+                    } catch (t: Throwable) {
+                        controller.appendLog("[VPN] CRASH in toggle: ${t.javaClass.simpleName}: ${t.message}")
                     }
                 }
             )
