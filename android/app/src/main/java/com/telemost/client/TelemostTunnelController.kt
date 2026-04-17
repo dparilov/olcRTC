@@ -194,6 +194,8 @@ class TelemostTunnelController(private val appContext: Context) {
                 // Extract room ID (digits after /j/)
                 val roomId = parseMeeting(roomUri) ?: roomUri
                 _meeting.value = roomId
+                // Save room URL so Launch Manual works after Stop
+                setRoomUrl("https://telemost.yandex.ru/j/$roomId")
 
                 // Publish to Disk if OAuth token available
                 if (token.isNotBlank() && secret.isNotBlank()) {
@@ -273,8 +275,13 @@ class TelemostTunnelController(private val appContext: Context) {
         }
     }
 
+    private fun isTunnelReady(): Boolean {
+        val s = _status.value
+        return s == "SOCKS ready" || s.startsWith("Connected") || Mobile.isRunning()
+    }
+
     fun rerunDiagnostics() {
-        if (_status.value != "SOCKS ready") {
+        if (!isTunnelReady()) {
             _diagnostics.value = "Diagnostics skipped: tunnel not ready"
             appendLog("Diagnostics skipped: tunnel not ready (state=${_status.value})")
             return
@@ -285,7 +292,7 @@ class TelemostTunnelController(private val appContext: Context) {
         diagnosticsJob = scope.launch {
             runCatching { DiagnosticsRunner.runAll("127.0.0.1", getSocksPort()) }
                 .onSuccess {
-                    if (_status.value == "SOCKS ready") {
+                    if (isTunnelReady()) {
                         _diagnostics.value = "Diagnostics finished"
                         appendLog(it)
                     } else {
@@ -294,7 +301,7 @@ class TelemostTunnelController(private val appContext: Context) {
                     }
                 }
                 .onFailure {
-                    if (_status.value == "SOCKS ready") {
+                    if (isTunnelReady()) {
                         _diagnostics.value = "Diagnostics failed"
                         appendLog("Diagnostics failed: ${it.message}")
                     } else {
