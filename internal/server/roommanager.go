@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"sync"
 	"time"
 
@@ -29,6 +30,8 @@ type RoomManager struct {
 	expiresAt string // real expiry from room record
 
 	onNewRoom func(roomURL, keyHex string) // callback when room changes
+
+	intentAPI *IntentAPI // room intent API handler
 }
 
 // RoomInfo is returned by the HTTP API.
@@ -145,6 +148,11 @@ func (rm *RoomManager) createAndPublish() error {
 
 // --- Optional HTTP API (for direct-access scenarios) ---
 
+// IntentAPI returns the intent API handler for state updates.
+func (rm *RoomManager) IntentAPI() *IntentAPI {
+	return rm.intentAPI
+}
+
 func (rm *RoomManager) serveHTTP(ctx context.Context) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/room", rm.handleRoom)
@@ -153,8 +161,16 @@ func (rm *RoomManager) serveHTTP(ctx context.Context) {
 		fmt.Fprintf(w, "ok")
 	})
 
-	// Bind to loopback only — never expose to public network
-	addr := fmt.Sprintf("127.0.0.1:%d", rm.apiPort)
+	// Register room intent API
+	previousSecret := ""
+	if v := os.Getenv("OLCRTC_PREVIOUS_SECRET"); v != "" {
+		previousSecret = v
+	}
+	rm.intentAPI = NewIntentAPI(rm.masterSecret, previousSecret)
+	rm.intentAPI.RegisterRoutes(mux)
+
+	// Bind to all interfaces for remote client access
+	addr := fmt.Sprintf("0.0.0.0:%d", rm.apiPort)
 	srv := &http.Server{Addr: addr, Handler: mux}
 
 	go func() {
