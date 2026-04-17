@@ -13,6 +13,7 @@ import (
 	"github.com/openlibrecommunity/olcrtc/internal/logger"
 	"github.com/openlibrecommunity/olcrtc/internal/protect"
 	"github.com/openlibrecommunity/olcrtc/internal/rendezvous"
+	"github.com/openlibrecommunity/olcrtc/internal/telemost"
 )
 
 // SocketProtector protects sockets from VPN routing on Android.
@@ -260,6 +261,16 @@ func FetchRoomFromDisk(oauthToken, masterSecret, previousSecret string) (string,
 
 	return record.RoomID, nil
 }
+
+// CreateRoom creates a new Telemost room using Yandex session cookies from WebView login.
+// Returns the conference URI. Cookies should be the raw cookie string from CookieManager.
+func CreateRoom(cookies string) (string, error) {
+	if cookies == "" {
+		return "", errors.New("cookies are required for room creation")
+	}
+	return telemost.CreateRoomWithCookies(cookies)
+}
+
 
 // DeriveKeyFromSecret computes deterministic encryption key from master secret + room ID.
 // Returns 64-char hex string. Both client and server compute the same key.

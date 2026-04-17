@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/openlibrecommunity/olcrtc/internal/protect"
@@ -83,6 +84,47 @@ func extractRoomID(joinURL string) string {
 		return path[3:]
 	}
 	return ""
+}
+
+// CreateRoomWithCookies creates a Telemost room via Frontend API using Yandex session cookies.
+func CreateRoomWithCookies(cookieStr string) (string, error) {
+	req, err := http.NewRequest("POST", frontendAPI+"/conferences?next_gen_media_platform_allowed=true",
+		strings.NewReader("{}"))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Cookie", cookieStr)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/125.0 Safari/537.36")
+	req.Header.Set("X-Telemost-Client-Version", "187.1.0")
+	req.Header.Set("Origin", "https://telemost.yandex.ru")
+	req.Header.Set("Referer", "https://telemost.yandex.ru/")
+	req.Header.Set("Client-Instance-Id", uuid.New().String())
+
+	client := protect.NewHTTPClient()
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("create room: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("create room error %d: %s", resp.StatusCode, body)
+	}
+
+	var result struct {
+		URI string `json:"uri"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("parse response: %w", err)
+	}
+	if result.URI == "" {
+		return "", fmt.Errorf("empty conference URI")
+	}
+
+	log.Printf("[API] Created room via cookies: %s", result.URI)
+	return result.URI, nil
 }
 
 type ConnectionInfo struct {
