@@ -325,8 +325,13 @@ class TelemostTunnelController(private val appContext: Context) {
                     appendLog("No delivery path: set Server Endpoint or OAuth Token")
                 }
 
-                // Launch tunnel — launchTunnel manages status through to "Connected — IP: ..."
-                launchTunnel(roomId)
+                // Launch tunnel only if delivery succeeded
+                if (intentDelivered) {
+                    launchTunnel(roomId)
+                } else {
+                    _status.value = "No delivery path — tunnel not started"
+                    appendLog("ERROR: Cannot start tunnel without successful server delivery")
+                }
             } catch (t: Throwable) {
                 appendLog("Create & launch failed: ${t.message}")
                 _status.value = "Error: ${t.message}"

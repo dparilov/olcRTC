@@ -31,7 +31,8 @@ type RoomManager struct {
 
 	onNewRoom func(roomURL, keyHex string) // callback when room changes
 
-	intentAPI *IntentAPI // room intent API handler
+	intentAPI    *IntentAPI // room intent API handler
+	lastRecordID string     // tracks most recent intent for ready signal
 }
 
 // RoomInfo is returned by the HTTP API.
@@ -71,6 +72,17 @@ func (rm *RoomManager) CurrentRoom() (string, string) {
 
 // Run starts the room manager: creates first room, publishes to Disk, rotates.
 func (rm *RoomManager) Run(ctx context.Context) error {
+	// API-only mode: if no OAuth token, skip room creation/publish and just serve API
+	if rm.oauthToken == "" {
+		log.Println("[ROOM-MGR] API-only mode (no OAuth token) — serving intent API only")
+		if rm.apiPort > 0 {
+			rm.serveHTTP(ctx) // blocks until ctx cancelled
+		} else {
+			<-ctx.Done()
+		}
+		return nil
+	}
+
 	// Create first room
 	if err := rm.createAndPublish(); err != nil {
 		return fmt.Errorf("create initial room: %w", err)
@@ -153,6 +165,29 @@ func (rm *RoomManager) IntentAPI() *IntentAPI {
 	return rm.intentAPI
 }
 
+// MarkIntentReady transitions the most recent intent to 'ready'.
+// Call this from the server callback when peer connection is established.
+func (rm *RoomManager) MarkIntentReady() {
+	rm.mu.RLock()
+	recordID := rm.lastRecordID
+	rm.mu.RUnlock()
+	if recordID != "" && rm.intentAPI != nil {
+		rm.intentAPI.UpdateState(recordID, IntentReady, "")
+		log.Printf("[ROOM-MGR] Intent ready — room %s confirmed active", rm.roomID)
+	}
+}
+
+// MarkIntentFailed transitions the most recent intent to 'failed'.
+func (rm *RoomManager) MarkIntentFailed(errMsg string) {
+	rm.mu.RLock()
+	recordID := rm.lastRecordID
+	rm.mu.RUnlock()
+	if recordID != "" && rm.intentAPI != nil {
+		rm.intentAPI.UpdateState(recordID, IntentFailed, errMsg)
+		log.Printf("[ROOM-MGR] Intent failed — %s", errMsg)
+	}
+}
+
 func (rm *RoomManager) serveHTTP(ctx context.Context) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/room", rm.handleRoom)
@@ -189,8 +224,12 @@ func (rm *RoomManager) serveHTTP(ctx context.Context) {
 			rm.onNewRoom(roomURL, keyHex)
 		}
 
-		rm.intentAPI.UpdateState(record.RecordID, IntentReady, "")
-		log.Printf("[ROOM-MGR] Intent ready — room %s active", record.RoomID)
+		// NOTE: State stays at 'starting' here. It transitions to 'ready'
+		// only when the server confirms the room connection is actually live.
+		// The onNewRoom callback must call rm.IntentAPI().UpdateState(recordID, IntentReady, "")
+		// after the server-side peer connection is established.
+		rm.lastRecordID = record.RecordID
+		log.Printf("[ROOM-MGR] Intent starting — room %s join initiated (not yet ready)", record.RoomID)
 	})
 	rm.intentAPI.RegisterRoutes(mux)
 
