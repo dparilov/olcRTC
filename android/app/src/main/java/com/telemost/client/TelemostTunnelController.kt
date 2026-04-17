@@ -70,7 +70,7 @@ class TelemostTunnelController(private val appContext: Context) {
     private val _status = MutableStateFlow("Idle")
     private val _meeting = MutableStateFlow("No meeting link parsed yet")
     private val _diagnostics = MutableStateFlow("Diagnostics have not run yet")
-    private val _logs = MutableStateFlow("Telemost Client v0.1\n")
+    private val _logs = MutableStateFlow("")
 
     val status: StateFlow<String> = _status.asStateFlow()
     val meeting: StateFlow<String> = _meeting.asStateFlow()

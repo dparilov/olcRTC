@@ -29,6 +29,26 @@ class TunnelVpnService : VpnService() {
     override fun onCreate() {
         super.onCreate()
         instance = this
+        // Required for Android 14+: VPN service must run as foreground
+        val channelId = "olcrtc_vpn"
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            val channel = android.app.NotificationChannel(
+                channelId, "olcRTC VPN",
+                android.app.NotificationManager.IMPORTANCE_LOW
+            )
+            (getSystemService(NOTIFICATION_SERVICE) as android.app.NotificationManager)
+                .createNotificationChannel(channel)
+        }
+        val notification = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            android.app.Notification.Builder(this, channelId)
+        } else {
+            @Suppress("DEPRECATION") android.app.Notification.Builder(this)
+        }.setContentTitle("olcRTC VPN")
+            .setContentText("Routing all traffic through tunnel")
+            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setOngoing(true)
+            .build()
+        startForeground(3, notification)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -85,7 +105,8 @@ class TunnelVpnService : VpnService() {
         Thread {
             try {
                 Log.i(TAG, "Starting tun2socks fd=$fd socks=127.0.0.1:$socksPort")
-                Mobile.setLogWriter(mobile.LogWriter { msg -> Log.i(TAG, msg) })
+                // Do NOT call Mobile.setLogWriter() here — it would replace
+                // the controller's log writer and break Disk log upload.
                 Mobile.startTun(fd.toLong(), socksPort.toLong())
                 Log.i(TAG, "tun2socks stopped")
             } catch (e: Exception) {
