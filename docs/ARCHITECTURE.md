@@ -96,6 +96,28 @@ Critical WebSocket messages:
    ```
 
 3. **`subscriberSdpOffer`** — Must handle ALL renegotiations.
+   On every subscriberSdpOffer: send subscriberSdpAnswer, then publisherSdpOffer, then setSlots.
+
+4. **`serverHello`** — Contains TURN servers with credentials.
+   PeerConnections MUST be created AFTER serverHello, not before.
+   Without TURN, VP8 RTP media doesn't flow between peers and SFU.
+
+5. **ICE Candidates** — Buffer until SetRemoteDescription completes.
+   Include `usernameFragment` extracted from candidate string.
+   On every subscriberSdpOffer: send subscriberSdpAnswer, then publisherSdpOffer, then setSlots.
+
+4. **`serverHello`** — Contains TURN servers with credentials.
+   PeerConnections MUST be created AFTER serverHello, not before.
+   ```
+   serverHello.rtcConfiguration.iceServers:
+   - stun:turn.tel.yandex.net + stun:stun.rtc.yandex.net
+   - turn:turn.tel.yandex.net:443 (UDP, with credentials)
+   - turn:turn.tel.yandex.net:443?transport=tcp (TCP fallback)
+   ```
+   Without TURN, VP8 RTP media doesn't flow between peers and SFU.
+
+5. **ICE Candidates** — Buffer until SetRemoteDescription completes.
+   Include `usernameFragment` extracted from candidate string.
 
 ### Key Derivation
 
@@ -117,9 +139,19 @@ Launches olcrtc as subprocess; secrets passed via environment variables.
 
 ### Android (`mobile/` + `android/`)
 Jetpack Compose UI. Settings: OAuth token, master secret.
-"Publish" button pushes room to Yandex Disk.
+
+**WebView Login**: `YandexLoginActivity` opens passport.yandex.ru in WebView,
+extracts Session_id cookies after login, stores in EncryptedSharedPreferences.
+
+**One-button flow** (`Create & Launch`):
+1. Creates room via Frontend API with saved cookies
+2. Publishes room to Yandex Disk (OAuth token)
+3. Connects to room and starts tunnel
+4. Server discovers room from Disk automatically
+
+Also supports manual flow: enter room URL + Publish + Launch.
 Key derived via `DeriveKeyFromSecret()` gomobile binding.
-Secrets stored in memory only, not persisted to config files.
+Secrets stored in EncryptedSharedPreferences.
 
 ## Reconnect Strategy
 
