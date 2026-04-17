@@ -25,6 +25,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 
 class MainActivity : ComponentActivity() {
@@ -102,7 +103,8 @@ private fun MainScreen(controller: TelemostTunnelController, onLogin: () -> Unit
                 onValueChange = { masterSecret = it; validationMsg = "" },
                 label = { Text("Master Secret (required)") },
                 modifier = Modifier.fillMaxWidth(),
-                singleLine = true
+                singleLine = true,
+                visualTransformation = PasswordVisualTransformation()
             )
             OutlinedTextField(
                 value = oauthToken,

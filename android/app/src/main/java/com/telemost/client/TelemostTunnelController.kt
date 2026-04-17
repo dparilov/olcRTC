@@ -199,16 +199,14 @@ class TelemostTunnelController(private val appContext: Context) {
 
                 // Publish to Disk if OAuth token available
                 if (token.isNotBlank() && secret.isNotBlank()) {
-                    _status.value = "Publishing to Disk..."
                     appendLog("Publishing room $roomId to Disk...")
                     mobile.Mobile.publishRoomToDisk(token, secret, roomId, 3)
-                    appendLog("Room published to Disk")
+                    appendLog("Room $roomId published to Disk")
                 } else {
                     appendLog("Skipping Disk publish (no OAuth token)")
                 }
 
-                // Launch tunnel
-                _status.value = "Launching tunnel..."
+                // Launch tunnel — launchTunnel manages status through to "Connected — IP: ..."
                 launchTunnel(roomId)
             } catch (t: Throwable) {
                 appendLog("Create & launch failed: ${t.message}")
