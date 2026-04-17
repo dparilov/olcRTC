@@ -429,16 +429,14 @@ class TelemostTunnelController(private val appContext: Context) {
                     for (attempt in 1..5) {
                         try {
                             val proxy = java.net.Proxy(java.net.Proxy.Type.SOCKS, java.net.InetSocketAddress("127.0.0.1", port))
-                            val conn = java.net.URL("https://ifconfig.me/all.json").openConnection(proxy) as java.net.HttpURLConnection
+                            val conn = java.net.URL("https://ifconfig.me").openConnection(proxy) as java.net.HttpURLConnection
                             conn.connectTimeout = 15000
                             conn.readTimeout = 15000
-                            val json = conn.inputStream.bufferedReader().readText()
+                            conn.setRequestProperty("User-Agent", "curl/7.0")
+                            val ip = conn.inputStream.bufferedReader().readText().trim()
                             conn.disconnect()
-                            val obj = org.json.JSONObject(json)
-                            val ip = obj.optString("ip_addr", "unknown")
-                            val country = obj.optString("country", "unknown")
-                            _status.value = "Connected — IP: $ip ($country)"
-                            appendLog("External IP: $ip ($country)")
+                            _status.value = "Connected — IP: $ip"
+                            appendLog("External IP: $ip")
                             return@launch
                         } catch (t: Throwable) {
                             appendLog("IP detection attempt $attempt/5: ${t.message}")

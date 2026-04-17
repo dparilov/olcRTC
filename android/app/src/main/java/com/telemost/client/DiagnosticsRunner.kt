@@ -23,7 +23,7 @@ object DiagnosticsRunner {
         val targets = listOf(
             "https://example.com",
             "https://cloudflare.com",
-            "https://ifconfig.me/all.json"
+            "https://ifconfig.me"
         )
         for (target in targets) {
             results += runCatching { httpsCheck(target, socksHost, socksPort) }
@@ -54,6 +54,7 @@ object DiagnosticsRunner {
             connectTimeout = 10_000
             readTimeout = 10_000
             requestMethod = "GET"
+            setRequestProperty("User-Agent", "curl/7.0")
         }
         conn.inputStream.use { stream ->
             return BufferedReader(InputStreamReader(stream)).readText().trim()
