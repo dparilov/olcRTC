@@ -260,6 +260,7 @@ private fun MainScreen(controller: TelemostTunnelController, onLogin: () -> Unit
             Text("VPN mode (all traffic)")
             Switch(
                 checked = controller.isVpnMode(),
+                enabled = status.contains("SOCKS ready") || status == "Running",
                 onCheckedChange = { enabled ->
                     try {
                         controller.setVpnMode(enabled)
