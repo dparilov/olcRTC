@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"os"
 	"sync"
 
 	"github.com/xjasonlyu/tun2socks/v2/engine"
@@ -32,6 +31,9 @@ func StartTun(fd, socksPort int64) error {
 	tunMu.Unlock()
 
 	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[tun2socks] PANIC recovered: %v", r)
+		}
 		tunMu.Lock()
 		tunActive = false
 		tunMu.Unlock()
@@ -40,9 +42,7 @@ func StartTun(fd, socksPort int64) error {
 	proxy := fmt.Sprintf("socks5://127.0.0.1:%d", socksPort)
 	log.Printf("[tun2socks] Starting: fd=%d proxy=%s", fd, proxy)
 
-	// Create TUN device from fd
-	tunFile := os.NewFile(uintptr(fd), "tun")
-	if tunFile == nil {
+	if fd < 0 {
 		return fmt.Errorf("invalid TUN fd: %d", fd)
 	}
 
