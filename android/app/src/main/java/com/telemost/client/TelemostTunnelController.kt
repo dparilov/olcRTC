@@ -564,8 +564,9 @@ class TelemostTunnelController(private val appContext: Context) {
     }
 
     companion object {
-        private val TELEMOST_REGEX = Regex("https://telemost\\.yandex(?:\\.ru|\\.com)/j/([A-Za-z0-9_-]+)")
-        private val ROOM_ID_REGEX = Regex("\\d{10,}")
+        // Unified room ID contract: Telemost room IDs are always numeric
+        private val TELEMOST_REGEX = Regex("https://telemost\\.yandex(?:\\.ru|\\.com)/j/(\\d+)")
+        private val ROOM_ID_REGEX = Regex("^\\d+$")
         private const val READY_TIMEOUT_MS = 30_000L
         private const val DEFAULT_SOCKS_PORT = 1080
         // No default key — must be derived from master secret or provided explicitly

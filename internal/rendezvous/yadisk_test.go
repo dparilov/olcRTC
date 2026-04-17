@@ -65,6 +65,142 @@ func TestIsExpired(t *testing.T) {
 	}
 }
 
+func TestSignVerifyCycle(t *testing.T) {
+	record := &RoomRecord{
+		RoomID:    "12345678901234",
+		RoomURL:   "https://telemost.yandex.ru/j/12345678901234",
+		CreatedAt: time.Now().Format(time.RFC3339),
+		ExpiresAt: time.Now().Add(3 * time.Hour).Format(time.RFC3339),
+	}
+	if err := SignRecord(record, "test-secret", 1); err != nil {
+		t.Fatalf("SignRecord failed: %v", err)
+	}
+	if record.Sig == "" {
+		t.Fatal("SignRecord should set Sig")
+	}
+	if record.RecordID == "" {
+		t.Fatal("SignRecord should set RecordID")
+	}
+	if record.Version != 2 {
+		t.Fatalf("expected version 2, got %d", record.Version)
+	}
+	if record.KeyVersion != 1 {
+		t.Fatalf("expected key_version 1, got %d", record.KeyVersion)
+	}
+
+	// Verify with correct secret
+	if err := VerifyRecord(record, "test-secret"); err != nil {
+		t.Fatalf("VerifyRecord failed: %v", err)
+	}
+
+	// Verify with wrong secret should fail
+	if err := VerifyRecord(record, "wrong-secret"); err == nil {
+		t.Fatal("VerifyRecord should fail with wrong secret")
+	}
+}
+
+func TestUnsignedRecordRejected(t *testing.T) {
+	// No sig field
+	record := &RoomRecord{Version: 2, RoomID: "123"}
+	if err := VerifyRecord(record, "secret"); err == nil {
+		t.Fatal("unsigned record should be rejected")
+	}
+
+	// Legacy version
+	record = &RoomRecord{Version: 1, Sig: "abc"}
+	if err := VerifyRecord(record, "secret"); err == nil {
+		t.Fatal("legacy version record should be rejected")
+	}
+}
+
+func TestVerifyRecordMultiSecrets(t *testing.T) {
+	record := &RoomRecord{
+		RoomID:    "99999999999",
+		RoomURL:   "https://telemost.yandex.ru/j/99999999999",
+		CreatedAt: time.Now().Format(time.RFC3339),
+		ExpiresAt: time.Now().Add(1 * time.Hour).Format(time.RFC3339),
+	}
+
+	// Sign with "old-secret"
+	if err := SignRecord(record, "old-secret", 1); err != nil {
+		t.Fatalf("SignRecord failed: %v", err)
+	}
+
+	// Verify with current=new, previous=old — should match previous (2)
+	matched, err := VerifyRecordMulti(record, "new-secret", "old-secret")
+	if err != nil {
+		t.Fatalf("VerifyRecordMulti failed: %v", err)
+	}
+	if matched != 2 {
+		t.Fatalf("expected match=2 (previous), got %d", matched)
+	}
+
+	// Verify with current=old, no previous — should match current (1)
+	matched, err = VerifyRecordMulti(record, "old-secret", "")
+	if err != nil {
+		t.Fatalf("VerifyRecordMulti failed: %v", err)
+	}
+	if matched != 1 {
+		t.Fatalf("expected match=1 (current), got %d", matched)
+	}
+
+	// Verify with both wrong — should fail
+	_, err = VerifyRecordMulti(record, "wrong1", "wrong2")
+	if err == nil {
+		t.Fatal("VerifyRecordMulti should fail with both wrong secrets")
+	}
+}
+
+func TestRecordIDUniqueness(t *testing.T) {
+	ids := make(map[string]bool)
+	for i := 0; i < 100; i++ {
+		id := generateRecordID()
+		if len(id) != 32 { // 16 bytes = 32 hex chars
+			t.Fatalf("expected 32-char record ID, got %d: %s", len(id), id)
+		}
+		if ids[id] {
+			t.Fatalf("duplicate record ID: %s", id)
+		}
+		ids[id] = true
+	}
+}
+
+func TestSignatureCannotBeForged(t *testing.T) {
+	record := &RoomRecord{
+		RoomID:    "55555555555",
+		RoomURL:   "https://telemost.yandex.ru/j/55555555555",
+		CreatedAt: time.Now().Format(time.RFC3339),
+		ExpiresAt: time.Now().Add(1 * time.Hour).Format(time.RFC3339),
+	}
+	if err := SignRecord(record, "real-secret", 1); err != nil {
+		t.Fatalf("SignRecord failed: %v", err)
+	}
+
+	// Tamper with room ID
+	record.RoomID = "66666666666"
+	if err := VerifyRecord(record, "real-secret"); err == nil {
+		t.Fatal("tampered record should fail verification")
+	}
+}
+
+func TestRoomIDContract(t *testing.T) {
+	// Valid numeric IDs
+	valid := []string{"12345", "77873352023589", "0", "999999999999999"}
+	for _, id := range valid {
+		if !numericRoomIDRe.MatchString(id) {
+			t.Errorf("should accept numeric room ID: %s", id)
+		}
+	}
+
+	// Invalid non-numeric
+	invalid := []string{"abc", "123abc", "room-id", "", "12 34", "12.34"}
+	for _, id := range invalid {
+		if numericRoomIDRe.MatchString(id) {
+			t.Errorf("should reject non-numeric room ID: %s", id)
+		}
+	}
+}
+
 func TestDeriveKeyFailClosed(t *testing.T) {
 	// Even with empty master secret, DeriveKey should return a valid 64-char hex
 	// (the caller is responsible for not calling with empty secret)

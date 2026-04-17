@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"net/url"
 	"sort"
 	"strings"
@@ -25,9 +26,30 @@ import (
 )
 
 const (
-	diskAPI      = "https://cloud-api.yandex.net/v1/disk"
-	roomFilePath = "app:/olcrtc/active-room.json"
+	diskAPI        = "https://cloud-api.yandex.net/v1/disk"
+	roomFilePath   = "app:/olcrtc/active-room.json"
+	httpTimeoutSec = 15 // explicit timeout for all Yandex Disk HTTP calls
 )
+
+// diskClient is used for all Yandex Disk API calls with explicit timeout.
+var diskClient = &http.Client{
+	Timeout: httpTimeoutSec * time.Second,
+}
+
+// numericRoomIDRe is the canonical room ID contract: Telemost room IDs are always numeric.
+// This regex is shared across Android, desktop and CLI for consistent validation.
+var numericRoomIDRe = regexp.MustCompile(`^\d+$`)
+
+// ValidateRoomID checks if a room ID matches the canonical contract.
+func ValidateRoomID(id string) error {
+	if id == "" {
+		return fmt.Errorf("room ID is empty")
+	}
+	if !numericRoomIDRe.MatchString(id) {
+		return fmt.Errorf("invalid room ID %q: must be numeric", id)
+	}
+	return nil
+}
 
 // RoomRecord is the contract for the rendezvous file on Yandex Disk.
 // Version 2 adds KeyVersion, RecordID and Sig for authenticated records.
@@ -203,7 +225,7 @@ func PublishRoom(oauthToken string, record *RoomRecord) error {
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := diskClient.Do(req)
 	if err != nil {
 		return err
 	}
@@ -230,7 +252,7 @@ func FetchRoom(oauthToken string) (*RoomRecord, error) {
 	}
 
 	// Download
-	resp, err := http.Get(dlURL)
+	resp, err := diskClient.Get(dlURL)
 	if err != nil {
 		return nil, err
 	}
@@ -271,7 +293,7 @@ func DeleteRoom(oauthToken string) error {
 	}
 	req.Header.Set("Authorization", "OAuth "+oauthToken)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := diskClient.Do(req)
 	if err != nil {
 		return err
 	}
@@ -296,7 +318,7 @@ func mkdirIfNeeded(token, path string) error {
 	}
 	req.Header.Set("Authorization", "OAuth "+token)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := diskClient.Do(req)
 	if err != nil {
 		return err
 	}
@@ -321,7 +343,7 @@ func getUploadURL(token, path string, overwrite bool) (string, error) {
 	}
 	req.Header.Set("Authorization", "OAuth "+token)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := diskClient.Do(req)
 	if err != nil {
 		return "", err
 	}
@@ -352,7 +374,7 @@ func getDownloadURL(token, path string) (string, error) {
 	}
 	req.Header.Set("Authorization", "OAuth "+token)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := diskClient.Do(req)
 	if err != nil {
 		return "", err
 	}
