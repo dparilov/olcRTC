@@ -23,6 +23,8 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import kotlinx.coroutines.launch
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -116,12 +118,16 @@ private fun MainScreen(controller: TelemostTunnelController, onLogin: () -> Unit
     val meeting by controller.meeting.collectAsState()
     val diagnostics by controller.diagnostics.collectAsState()
     val logs by controller.logs.collectAsState()
+    val scrollState = rememberScrollState()
+    LaunchedEffect(logs) {
+        scrollState.animateScrollTo(scrollState.maxValue)
+    }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
             .padding(16.dp)
-            .verticalScroll(rememberScrollState()),
+            .verticalScroll(scrollState),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Text("Telemost Client", style = MaterialTheme.typography.headlineSmall)
@@ -279,6 +285,6 @@ private fun MainScreen(controller: TelemostTunnelController, onLogin: () -> Unit
         }
 
         Text("Logs", style = MaterialTheme.typography.titleMedium)
-        Text(logs)
+        Text(logs, style = MaterialTheme.typography.bodySmall)
     }
 }
