@@ -253,3 +253,5 @@ build/
 *.exe
 *.aar
 ui/ui
+olcrtc
+olcrtc-linux-amd64

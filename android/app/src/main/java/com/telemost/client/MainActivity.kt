@@ -4,7 +4,9 @@ import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import android.net.VpnService
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.material3.Switch
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -31,6 +33,14 @@ import androidx.compose.ui.unit.dp
 class MainActivity : ComponentActivity() {
     private val controller by lazy { TelemostTunnelController(applicationContext) }
 
+    private val vpnPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == RESULT_OK) {
+            controller.startVpnService()
+        }
+    }
+
     private val loginLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
@@ -50,6 +60,13 @@ class MainActivity : ComponentActivity() {
                     controller.handleIntent(this@MainActivity.intent)
                     MainScreen(controller, onLogin = {
                         loginLauncher.launch(Intent(this@MainActivity, YandexLoginActivity::class.java))
+                    }, onVpnRequest = {
+                        val prepareIntent = VpnService.prepare(this@MainActivity)
+                        if (prepareIntent != null) {
+                            vpnPermissionLauncher.launch(prepareIntent)
+                        } else {
+                            controller.startVpnService()
+                        }
                     })
                 }
             }
@@ -63,7 +80,7 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-private fun MainScreen(controller: TelemostTunnelController, onLogin: () -> Unit = {}) {
+private fun MainScreen(controller: TelemostTunnelController, onLogin: () -> Unit = {}, onVpnRequest: () -> Unit = {}) {
     val status by controller.status.collectAsState()
     val meeting by controller.meeting.collectAsState()
     val diagnostics by controller.diagnostics.collectAsState()
@@ -189,6 +206,26 @@ private fun MainScreen(controller: TelemostTunnelController, onLogin: () -> Unit
             }) {
                 Text("Publish")
             }
+        }
+
+        // VPN mode toggle
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+        ) {
+            Text("VPN mode (all traffic)")
+            Switch(
+                checked = controller.isVpnMode(),
+                onCheckedChange = { enabled ->
+                    controller.setVpnMode(enabled)
+                    if (enabled) {
+                        onVpnRequest()
+                    } else {
+                        controller.stopVpnService()
+                    }
+                }
+            )
         }
 
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {

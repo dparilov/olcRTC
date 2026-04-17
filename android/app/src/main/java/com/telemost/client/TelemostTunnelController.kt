@@ -251,7 +251,34 @@ class TelemostTunnelController(private val appContext: Context) {
         }
     }
 
+    fun isVpnMode(): Boolean = prefs.getBoolean("vpn_mode", false)
+
+    fun setVpnMode(enabled: Boolean) {
+        prefs.edit().putBoolean("vpn_mode", enabled).apply()
+        appendLog("VPN mode: ${if (enabled) "ON (all traffic)" else "OFF (SOCKS only)"}")
+    }
+
+    fun startVpnService() {
+        val port = getSocksPort()
+        val intent = Intent(appContext, TunnelVpnService::class.java).apply {
+            action = TunnelVpnService.ACTION_START
+            putExtra(TunnelVpnService.EXTRA_SOCKS_PORT, port)
+        }
+        appContext.startService(intent)
+        appendLog("VPN service started (port=$port)")
+    }
+
+    fun stopVpnService() {
+        val intent = Intent(appContext, TunnelVpnService::class.java).apply {
+            action = TunnelVpnService.ACTION_STOP
+        }
+        appContext.startService(intent)
+        appendLog("VPN service stopped")
+    }
+
     fun stopTunnel() {
+        // Stop VPN if active
+        stopVpnService()
         // Stop foreground service
         try {
             appContext.stopService(Intent(appContext, TunnelForegroundService::class.java))
@@ -273,7 +300,7 @@ class TelemostTunnelController(private val appContext: Context) {
         }
     }
 
-    private fun isTunnelReady(): Boolean {
+    fun isTunnelReady(): Boolean {
         val s = _status.value
         return s == "SOCKS ready" || s.startsWith("Connected") || Mobile.isRunning()
     }
