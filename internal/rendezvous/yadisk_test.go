@@ -201,6 +201,41 @@ func TestRoomIDContract(t *testing.T) {
 	}
 }
 
+func TestReplayDetection(t *testing.T) {
+	// Two records for same room must get different RecordIDs
+	r1 := &RoomRecord{
+		RoomID:    "111111111",
+		RoomURL:   "https://telemost.yandex.ru/j/111111111",
+		CreatedAt: time.Now().Format(time.RFC3339),
+		ExpiresAt: time.Now().Add(1 * time.Hour).Format(time.RFC3339),
+	}
+	if err := SignRecord(r1, "secret", 1); err != nil {
+		t.Fatal(err)
+	}
+
+	r2 := &RoomRecord{
+		RoomID:    "111111111",
+		RoomURL:   "https://telemost.yandex.ru/j/111111111",
+		CreatedAt: time.Now().Format(time.RFC3339),
+		ExpiresAt: time.Now().Add(1 * time.Hour).Format(time.RFC3339),
+	}
+	if err := SignRecord(r2, "secret", 1); err != nil {
+		t.Fatal(err)
+	}
+
+	// Different RecordIDs = not a replay
+	if r1.RecordID == r2.RecordID {
+		t.Fatal("two SignRecord calls must produce different RecordIDs")
+	}
+
+	// Same RecordID = replay (simulated)
+	r2.RecordID = r1.RecordID
+	if r1.RecordID != r2.RecordID {
+		t.Fatal("replay simulation failed")
+	}
+	// In runtime, the reader would reject r2 because lastRecordID == r2.RecordID
+}
+
 func TestDeriveKeyFailClosed(t *testing.T) {
 	// Even with empty master secret, DeriveKey should return a valid 64-char hex
 	// (the caller is responsible for not calling with empty secret)

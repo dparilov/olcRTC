@@ -407,6 +407,7 @@ func runWatchServer(ctx context.Context, cfg config) error {
 	log.Println("[WATCH-SRV] Self-check passed, entering active monitoring")
 
 	var lastRoomID string
+	var lastRecordID string // replay dedup: reject re-seen record_id
 
 	for {
 		log.Println("[WATCH-SRV] Polling Yandex Disk for room...")
@@ -423,6 +424,16 @@ func runWatchServer(ctx context.Context, cfg config) error {
 		}
 		if record == nil {
 			log.Println("[WATCH-SRV] No active room yet, polling in 10s...")
+			select {
+			case <-time.After(10 * time.Second):
+				continue
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+
+		// Replay dedup: reject if same record_id already processed
+		if record.RecordID != "" && record.RecordID == lastRecordID {
 			select {
 			case <-time.After(10 * time.Second):
 				continue
@@ -449,6 +460,7 @@ func runWatchServer(ctx context.Context, cfg config) error {
 		}
 
 		lastRoomID = record.RoomID
+		lastRecordID = record.RecordID
 		keyHex := rendezvous.DeriveKey(secret, record.RoomID)
 		log.Printf("[WATCH-SRV] Verified room: %s (sig OK, key_version=%d)", record.RoomURL, record.KeyVersion)
 
@@ -473,6 +485,7 @@ func runWatchServer(ctx context.Context, cfg config) error {
 			case srvErr := <-srvDone:
 				log.Printf("[WATCH-SRV] Room ended: %v. Polling for new room in 5s...", srvErr)
 				lastRoomID = "" // allow reconnect to same room if client re-publishes
+				lastRecordID = "" // allow replay after disconnect
 				goto nextPoll
 			case <-ctx.Done():
 				srvCancel()
@@ -482,6 +495,10 @@ func runWatchServer(ctx context.Context, cfg config) error {
 				newRecord, newMatched, pollErr := rendezvous.FetchAndVerifyRoom(cfg.oauthToken, cfg.masterSecret, previousSecret)
 				if pollErr != nil || newRecord == nil {
 					continue // keep current room
+				}
+				// Replay dedup on poll too
+				if newRecord.RecordID != "" && newRecord.RecordID == lastRecordID {
+					continue
 				}
 				if newRecord.RoomID != lastRoomID {
 					log.Printf("[WATCH-SRV] New room detected: %s (was %s) — switching!", newRecord.RoomID, lastRoomID)
@@ -494,6 +511,7 @@ func runWatchServer(ctx context.Context, cfg config) error {
 						newSecret = previousSecret
 					}
 					lastRoomID = newRecord.RoomID
+					lastRecordID = newRecord.RecordID
 					keyHex = rendezvous.DeriveKey(newSecret, newRecord.RoomID)
 					log.Printf("[WATCH-SRV] Verified room: %s (sig OK)", newRecord.RoomURL)
 
