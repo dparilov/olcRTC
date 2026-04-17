@@ -427,6 +427,11 @@ class TelemostTunnelController(private val appContext: Context) {
                 _diagnostics.value = "Diagnostics available (manual start recommended)"
                 val port = getSocksPort()
                 appendLog("Tunnel ready on local SOCKS port $port")
+                // Auto-start VPN if mode was enabled from previous session
+                if (isVpnMode()) {
+                    appendLog("VPN mode is ON — auto-starting VPN service")
+                    startVpnService()
+                }
                 // Detect external IP through the tunnel (retry — server may still be connecting to SFU)
                 scope.launch {
                     for (attempt in 1..5) {
