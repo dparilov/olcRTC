@@ -78,6 +78,8 @@ class TelemostTunnelController(private val appContext: Context) {
     val logs: StateFlow<String> = _logs.asStateFlow()
 
     init {
+        // Reset transient state on each app start (only secrets+cookies persist)
+        prefs.edit().putBoolean("vpn_mode", false).putString("room_url", "").apply()
         Mobile.touch()
         Mobile.setDebug(true)
         Mobile.setLogWriter(LogWriter { line -> appendLog(line) })
@@ -263,13 +265,17 @@ class TelemostTunnelController(private val appContext: Context) {
 
     fun startVpnService() {
         TunnelVpnService.logCallback = { msg -> appendLog(msg) }
-        val port = getSocksPort()
-        val intent = Intent(appContext, TunnelVpnService::class.java).apply {
-            action = TunnelVpnService.ACTION_START
-            putExtra(TunnelVpnService.EXTRA_SOCKS_PORT, port)
+        try {
+            val port = getSocksPort()
+            val intent = Intent(appContext, TunnelVpnService::class.java).apply {
+                action = TunnelVpnService.ACTION_START
+                putExtra(TunnelVpnService.EXTRA_SOCKS_PORT, port)
+            }
+            appContext.startService(intent)
+            appendLog("VPN service started (port=$port)")
+        } catch (t: Throwable) {
+            appendLog("[VPN] ERROR starting service: ${t.message}")
         }
-        appContext.startService(intent)
-        appendLog("VPN service started (port=$port)")
     }
 
     fun stopVpnService() {
@@ -428,11 +434,7 @@ class TelemostTunnelController(private val appContext: Context) {
                 _diagnostics.value = "Diagnostics available (manual start recommended)"
                 val port = getSocksPort()
                 appendLog("Tunnel ready on local SOCKS port $port")
-                // Auto-start VPN if mode was enabled from previous session
-                if (isVpnMode()) {
-                    appendLog("VPN mode is ON — auto-starting VPN service")
-                    startVpnService()
-                }
+                // VPN mode is NOT auto-started — user must toggle manually each session
                 // Detect external IP through the tunnel (retry — server may still be connecting to SFU)
                 scope.launch {
                     for (attempt in 1..5) {
