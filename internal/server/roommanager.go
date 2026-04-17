@@ -167,7 +167,46 @@ func (rm *RoomManager) serveHTTP(ctx context.Context) {
 		previousSecret = v
 	}
 	rm.intentAPI = NewIntentAPI(rm.masterSecret, previousSecret)
+	rm.intentAPI.SetAcceptedCallback(func(record *rendezvous.RoomRecord, keyHex string) {
+		rm.intentAPI.UpdateState(record.RecordID, IntentStarting, "")
+		log.Printf("[ROOM-MGR] Intent accepted — switching to room %s", record.RoomID)
+
+		roomURL := record.RoomURL
+		if roomURL == "" {
+			roomURL = "https://telemost.yandex.ru/j/" + record.RoomID
+		}
+
+		// Update current room state
+		rm.mu.Lock()
+		rm.roomID = record.RoomID
+		rm.roomURL = roomURL
+		rm.keyHex = keyHex
+		rm.expiresAt = record.ExpiresAt
+		rm.mu.Unlock()
+
+		// Notify server to switch to new room
+		if rm.onNewRoom != nil {
+			rm.onNewRoom(roomURL, keyHex)
+		}
+
+		rm.intentAPI.UpdateState(record.RecordID, IntentReady, "")
+		log.Printf("[ROOM-MGR] Intent ready — room %s active", record.RoomID)
+	})
 	rm.intentAPI.RegisterRoutes(mux)
+
+	// Periodic cleanup of stale intents (every 10 min, 30 min retention)
+	go func() {
+		ticker := time.NewTicker(10 * time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				rm.intentAPI.CleanupStale(30 * time.Minute)
+			}
+		}
+	}()
 
 	// Bind to all interfaces for remote client access
 	addr := fmt.Sprintf("0.0.0.0:%d", rm.apiPort)

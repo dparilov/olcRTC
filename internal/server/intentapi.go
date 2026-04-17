@@ -210,6 +210,19 @@ func (api *IntentAPI) handleRoomIntentStatus(w http.ResponseWriter, r *http.Requ
 	api.jsonResponse(w, http.StatusOK, resp)
 }
 
+// CleanupStale removes terminal intents older than retention window.
+func (api *IntentAPI) CleanupStale(retention time.Duration) {
+	api.mu.Lock()
+	defer api.mu.Unlock()
+	now := time.Now()
+	for id, entry := range api.intents {
+		age := now.Sub(entry.CreatedAt)
+		if age > retention && (entry.State == IntentReady || entry.State == IntentFailed || entry.State == IntentDuplicate || entry.State == IntentExpired) {
+			delete(api.intents, id)
+		}
+	}
+}
+
 func (api *IntentAPI) jsonResponse(w http.ResponseWriter, code int, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)

@@ -117,7 +117,7 @@ class TelemostTunnelController(private val appContext: Context) {
         val roomId = if (savedRoom.isNotBlank()) parseMeeting(savedRoom) else null
         if (roomId == null) {
             _status.value = "Room URL not set"
-            appendLog("Enter Telemost room URL in the Room URL field and press Publish first")
+            appendLog("Enter Telemost room URL in the Room URL field and use Create & Start")
             return
         }
         _meeting.value = roomId
@@ -279,37 +279,50 @@ class TelemostTunnelController(private val appContext: Context) {
                     _status.value = "Sending intent to server..."
                     val recordId = sendRoomIntent(endpoint, intentJson)
                     if (recordId != null) {
-                        appendLog("Server accepted room intent")
-                        _status.value = "Server accepted, starting..."
-                        // Poll for ready status (up to 30s)
+                        appendLog("Intent accepted, waiting for server ready...")
+                        _status.value = "Intent accepted, server starting..."
+                        // Poll for ready/failed (up to 30s)
+                        var finalStatus = "timeout"
                         for (i in 1..15) {
                             kotlinx.coroutines.delay(2000)
                             val status = pollIntentStatus(endpoint, recordId)
-                            appendLog("[API] Poll: $status")
+                            appendLog("[API] Poll #$i: $status")
                             if (status == "ready") {
-                                appendLog("Server ready")
-                                _status.value = "Server ready"
+                                finalStatus = "ready"
                                 break
                             }
                             if (status == "failed") {
-                                appendLog("Server failed to start room")
+                                finalStatus = "failed"
                                 break
                             }
                         }
-                        intentDelivered = true
+                        when (finalStatus) {
+                            "ready" -> {
+                                appendLog("Server ready")
+                                _status.value = "Server ready"
+                                intentDelivered = true
+                            }
+                            "failed" -> {
+                                appendLog("Server failed to start room — trying fallback...")
+                            }
+                            else -> {
+                                appendLog("Server did not reach ready within 30s — trying fallback...")
+                            }
+                        }
                     } else {
-                        appendLog("Direct API unavailable, trying fallback...")
+                        appendLog("Direct server path unavailable")
                     }
                 }
 
-                if (!intentDelivered && token.isNotBlank() && secret.isNotBlank()) {
-                    appendLog("Fallback: publishing room $roomId to Disk...")
+                // Fallback: Disk publish if API failed/timed out
+                if (!intentDelivered && token.isNotBlank()) {
+                    appendLog("Fallback delivery via Yandex Disk...")
                     _status.value = "Fallback delivery via Yandex Disk..."
                     mobile.Mobile.publishRoomToDisk(token, secret, roomId, 3)
                     appendLog("Room $roomId published to Disk")
                     intentDelivered = true
                 } else if (!intentDelivered) {
-                    appendLog("WARNING: No delivery path available (no API endpoint, no OAuth token)")
+                    appendLog("No delivery path: set Server Endpoint or OAuth Token")
                 }
 
                 // Launch tunnel — launchTunnel manages status through to "Connected — IP: ..."
@@ -389,9 +402,27 @@ class TelemostTunnelController(private val appContext: Context) {
                     _status.value = "Sending intent to server..."
                     val recordId = sendRoomIntent(endpoint, intentJson)
                     if (recordId != null) {
-                        appendLog("Server accepted room intent")
-                        _status.value = "Server accepted"
-                        delivered = true
+                        appendLog("Intent accepted, server starting...")
+                        _status.value = "Intent accepted, server starting..."
+                        // Poll for ready/failed (up to 30s)
+                        for (i in 1..15) {
+                            kotlinx.coroutines.delay(2000)
+                            val status = pollIntentStatus(endpoint, recordId)
+                            appendLog("[API] Poll #$i: $status")
+                            if (status == "ready") {
+                                appendLog("Server ready")
+                                _status.value = "Server ready"
+                                delivered = true
+                                break
+                            }
+                            if (status == "failed") {
+                                appendLog("Server failed to start room")
+                                break
+                            }
+                        }
+                        if (!delivered) {
+                            appendLog("Server did not reach ready — trying fallback...")
+                        }
                     } else {
                         appendLog("Direct server path unavailable")
                     }
