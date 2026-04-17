@@ -147,6 +147,15 @@ class TelemostTunnelController(private val appContext: Context) {
         appendLog("Master secret updated")
     }
 
+    fun getYandexCookies(): String = prefs.getString("yandex_cookies", "") ?: ""
+
+    fun setYandexCookies(cookies: String) {
+        prefs.edit().putString("yandex_cookies", cookies).apply()
+        appendLog("Yandex cookies saved (${cookies.length} chars)")
+    }
+
+    fun hasYandexCookies(): Boolean = getYandexCookies().isNotBlank()
+
     fun getRoomUrl(): String = prefs.getString("room_url", "") ?: ""
 
     fun setRoomUrl(url: String) {
@@ -158,7 +167,55 @@ class TelemostTunnelController(private val appContext: Context) {
         }
     }
 
-    fun publishRoomToDisk() {
+    /**
+     * One-button flow: create room with cookies -> publish to Disk -> launch tunnel.
+     */
+    fun createAndLaunch() {
+        val cookies = getYandexCookies()
+        val token = getOAuthToken()
+        val secret = getMasterSecret()
+        if (cookies.isBlank()) {
+            appendLog("Cannot create room: Yandex cookies missing. Tap 'Login to Yandex' first.")
+            _status.value = "Login required"
+            return
+        }
+        if (secret.isBlank()) {
+            appendLog("Cannot launch: Master secret required")
+            _status.value = "Secret required"
+            return
+        }
+        scope.launch {
+            try {
+                _status.value = "Creating room..."
+                appendLog("Creating Telemost room via cookies...")
+                val roomUri = Mobile.createRoom(cookies)
+                appendLog("Room created: $roomUri")
+
+                // Extract room ID (digits after /j/)
+                val roomId = parseMeeting(roomUri) ?: roomUri
+                _meeting.value = roomId
+
+                // Publish to Disk if OAuth token available
+                if (token.isNotBlank() && secret.isNotBlank()) {
+                    _status.value = "Publishing to Disk..."
+                    appendLog("Publishing room $roomId to Disk...")
+                    mobile.Mobile.publishRoomToDisk(token, secret, roomId, 3)
+                    appendLog("Room published to Disk")
+                } else {
+                    appendLog("Skipping Disk publish (no OAuth token)")
+                }
+
+                // Launch tunnel
+                _status.value = "Launching tunnel..."
+                launchTunnel(roomId)
+            } catch (t: Throwable) {
+                appendLog("Create & launch failed: ${t.message}")
+                _status.value = "Error: ${t.message}"
+            }
+        }
+    }
+
+        fun publishRoomToDisk() {
         val token = getOAuthToken()
         val secret = getMasterSecret()
         // Try current meeting first, then saved room URL

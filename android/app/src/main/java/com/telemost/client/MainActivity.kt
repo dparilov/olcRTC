@@ -4,6 +4,7 @@ import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -27,14 +28,28 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 
 class MainActivity : ComponentActivity() {
+    private val controller by lazy { TelemostTunnelController(applicationContext) }
+
+    private val loginLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == RESULT_OK) {
+            val cookies = result.data?.getStringExtra(YandexLoginActivity.EXTRA_COOKIES) ?: ""
+            if (cookies.isNotBlank()) {
+                controller.setYandexCookies(cookies)
+            }
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
             MaterialTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
-                    val controller = remember { TelemostTunnelController(applicationContext) }
-                    controller.handleIntent(intent)
-                    MainScreen(controller)
+                    controller.handleIntent(this@MainActivity.intent)
+                    MainScreen(controller, onLogin = {
+                        loginLauncher.launch(Intent(this@MainActivity, YandexLoginActivity::class.java))
+                    })
                 }
             }
         }
@@ -47,7 +62,7 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-private fun MainScreen(controller: TelemostTunnelController) {
+private fun MainScreen(controller: TelemostTunnelController, onLogin: () -> Unit = {}) {
     val status by controller.status.collectAsState()
     val meeting by controller.meeting.collectAsState()
     val diagnostics by controller.diagnostics.collectAsState()
@@ -118,9 +133,37 @@ private fun MainScreen(controller: TelemostTunnelController) {
             }
             // Settings auto-save on Launch/Publish — no separate Save button needed
 
+        // Yandex Login status
+        Text(
+            if (controller.hasYandexCookies()) "\u2713 Yandex logged in"
+            else "\u26A0 Yandex login required for room creation",
+            style = MaterialTheme.typography.bodySmall
+        )
+
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = { onLogin() }) {
+                Text("Login to Yandex")
+            }
+            Button(onClick = {
+                // Auto-save settings, then create room + publish + launch
+                if (masterSecret.isBlank()) { validationMsg = "Master secret is required"; return@Button }
+                if (masterSecret.length < 8) { validationMsg = "Min 8 characters"; return@Button }
+                socksPort.toIntOrNull()?.let { controller.setSocksPort(it) }
+                controller.setOAuthToken(oauthToken)
+                controller.setMasterSecret(masterSecret)
+                validationMsg = ""
+                controller.createAndLaunch()
+            }) {
+                Text("Create & Launch")
+            }
+            Button(onClick = { controller.stopTunnel() }) {
+                Text("Stop")
+            }
+        }
+
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = {
-                // Auto-save settings before launch
+                // Manual launch with existing room URL
                 if (masterSecret.isBlank()) { validationMsg = "Master secret is required"; return@Button }
                 if (masterSecret.length < 8) { validationMsg = "Min 8 characters"; return@Button }
                 socksPort.toIntOrNull()?.let { controller.setSocksPort(it) }
@@ -130,13 +173,9 @@ private fun MainScreen(controller: TelemostTunnelController) {
                 validationMsg = ""
                 controller.launchFromClipboard()
             }) {
-                Text("Launch tunnel")
-            }
-            Button(onClick = { controller.stopTunnel() }) {
-                Text("Stop")
+                Text("Launch (manual)")
             }
             Button(onClick = {
-                // Auto-save settings before publish
                 if (masterSecret.isBlank()) { validationMsg = "Master secret is required"; return@Button }
                 if (masterSecret.length < 8) { validationMsg = "Min 8 characters"; return@Button }
                 socksPort.toIntOrNull()?.let { controller.setSocksPort(it) }
