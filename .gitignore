@@ -252,3 +252,4 @@ build/android/local.properties
 build/
 *.exe
 *.aar
+ui/ui

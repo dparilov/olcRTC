@@ -48,7 +48,15 @@ func NewProgram() *Program {
 	cfg := p.loadConfig()
 	cfg.Os = uOs
 	p.Config = cfg
-	p.buildRunString(cfg.ConferenceID, cfg.EncryptionKey, cfg.SocksPort, cfg.DNS, cfg.MasterSecret)
+	roomID := cfg.ConferenceID
+	if cfg.RoomURL != "" {
+		if parsed := parseRoomInput(cfg.RoomURL); parsed != "" {
+			roomID = parsed
+		}
+	}
+	if roomID != "" {
+		p.buildRunString(roomID, cfg.SocksPort, cfg.DNS, cfg.MasterSecret)
+	}
 	return p
 }
 

@@ -9,8 +9,9 @@ import (
 )
 
 type secretData struct {
-	MasterSecret string `json:"master_secret,omitempty"`
-	OAuthToken   string `json:"oauth_token,omitempty"`
+	MasterSecret   string `json:"master_secret,omitempty"`
+	OAuthToken     string `json:"oauth_token,omitempty"`
+	YandexCookies  string `json:"yandex_cookies,omitempty"`
 }
 
 func getSecretsPath() string {
@@ -21,8 +22,8 @@ func getSecretsPath() string {
 	return filepath.Join(dir, "olcrtc", "secrets.json")
 }
 
-func saveSecrets(masterSecret, oauthToken string) error {
-	data := secretData{MasterSecret: masterSecret, OAuthToken: oauthToken}
+func saveSecrets(masterSecret, oauthToken, yandexCookies string) error {
+	data := secretData{MasterSecret: masterSecret, OAuthToken: oauthToken, YandexCookies: yandexCookies}
 	plain, err := json.Marshal(data)
 	if err != nil {
 		return err
@@ -35,7 +36,7 @@ func saveSecrets(masterSecret, oauthToken string) error {
 	return os.WriteFile(path, plain, 0600)
 }
 
-func loadSecrets() (masterSecret, oauthToken string, err error) {
+func loadSecrets() (masterSecret, oauthToken, yandexCookies string, err error) {
 	path := getSecretsPath()
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -48,7 +49,7 @@ func loadSecrets() (masterSecret, oauthToken string, err error) {
 	if err := json.Unmarshal(data, &s); err != nil {
 		return "", "", err
 	}
-	return s.MasterSecret, s.OAuthToken, nil
+	return s.MasterSecret, s.OAuthToken, s.YandexCookies, nil
 }
 
 func deleteSecrets() error {

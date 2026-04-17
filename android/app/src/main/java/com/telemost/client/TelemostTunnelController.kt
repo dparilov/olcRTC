@@ -283,7 +283,7 @@ class TelemostTunnelController(private val appContext: Context) {
         _diagnostics.value = "Diagnostics running"
         appendLog("Diagnostics requested")
         diagnosticsJob = scope.launch {
-            runCatching { DiagnosticsRunner.runAll("127.0.0.1", DEFAULT_SOCKS_PORT) }
+            runCatching { DiagnosticsRunner.runAll("127.0.0.1", getSocksPort()) }
                 .onSuccess {
                     if (_status.value == "SOCKS ready") {
                         _diagnostics.value = "Diagnostics finished"

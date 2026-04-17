@@ -15,9 +15,11 @@ type Config struct {
 	DNS           string `json:"dns"`
 	EncryptionKey string `json:"-"` // not persisted in JSON (security)
 	SocksPort     string `json:"socks_port"`
-	ConferenceID  string `json:"conference_id"`
-	OAuthToken    string `json:"-"` // not persisted in JSON (security)
-	MasterSecret  string `json:"-"` // not persisted in JSON (security)
+	ConferenceID  string `json:"conference_id"` // legacy: numeric room ID
+	RoomURL       string `json:"room_url"`      // primary: Telemost room URL or ID
+	OAuthToken    string `json:"-"`             // not persisted in JSON (security)
+	MasterSecret  string `json:"-"`             // not persisted in JSON (security)
+	YandexCookies string `json:"-"`             // not persisted in JSON (security)
 }
 
 // legacyConfig is used to read old configs that may contain secrets.
@@ -46,6 +48,10 @@ func isValidConferenceID(conferenceID string) bool {
 	conferenceID = strings.TrimSpace(conferenceID)
 	if conferenceID == "" {
 		return false
+	}
+	// Accept both numeric room ID and Telemost URL
+	if parseRoomInput(conferenceID) != "" {
+		return true
 	}
 	matched, err := regexp.MatchString(`^\d+$`, conferenceID)
 	if err != nil {
@@ -101,7 +107,7 @@ func (p *Program) loadConfig() *Config {
 	}
 
 	// Load secrets from platform-native secure storage (DPAPI on Windows, file on Linux)
-	storedSecret, storedToken, secErr := loadSecrets()
+	storedSecret, storedToken, storedCookies, secErr := loadSecrets()
 	if secErr != nil {
 		log("WARNING: Could not load from secure storage: %v", secErr)
 	} else {
@@ -112,6 +118,10 @@ func (p *Program) loadConfig() *Config {
 		if storedToken != "" {
 			cfg.OAuthToken = storedToken
 			log("OAuth token loaded from secure storage (%s)", secretStorageType())
+		}
+		if storedCookies != "" {
+			cfg.YandexCookies = storedCookies
+			log("Yandex cookies loaded from secure storage (%s)", secretStorageType())
 		}
 	}
 
@@ -131,7 +141,7 @@ func (p *Program) loadConfig() *Config {
 	}
 	if migrated {
 		log("SECURITY: Found legacy secrets in config - migrating to secure storage")
-		if err := saveSecrets(cfg.MasterSecret, cfg.OAuthToken); err != nil {
+		if err := saveSecrets(cfg.MasterSecret, cfg.OAuthToken, cfg.YandexCookies); err != nil {
 			log("WARNING: Could not migrate to secure storage: %v", err)
 		} else {
 			log("Legacy secrets migrated to secure storage (%s)", secretStorageType())
@@ -159,10 +169,10 @@ func (p *Program) loadConfig() *Config {
 	return cfg
 }
 
-func (p *Program) saveConfig(dns, encryptionKey, socksPort, conferenceID, oauthToken, masterSecret string) {
+func (p *Program) saveConfig(dns, encryptionKey, socksPort, roomInput, oauthToken, masterSecret, yandexCookies string) {
 	log("Saving configuration...")
 
-	conferenceID = strings.ReplaceAll(conferenceID, " ", "")
+	roomInput = strings.TrimSpace(roomInput)
 
 	if !isValidPort(socksPort) {
 		log("ERROR: Invalid port: %s", socksPort)
@@ -170,10 +180,15 @@ func (p *Program) saveConfig(dns, encryptionKey, socksPort, conferenceID, oauthT
 		return
 	}
 
-	if !isValidConferenceID(conferenceID) {
-		log("ERROR: Invalid conference ID: %s", conferenceID)
-		p.showError(fmt.Errorf("invalid conference ID: must contain only numbers"))
-		return
+	// Parse room input: accept URL or numeric ID
+	var conferenceID string
+	if roomInput != "" {
+		conferenceID = parseRoomInput(roomInput)
+		if conferenceID == "" {
+			log("ERROR: Invalid room input: %s", roomInput)
+			p.showError(fmt.Errorf("invalid room: enter Telemost URL or numeric room ID"))
+			return
+		}
 	}
 
 	p.Config = &Config{
@@ -181,8 +196,10 @@ func (p *Program) saveConfig(dns, encryptionKey, socksPort, conferenceID, oauthT
 		EncryptionKey: encryptionKey,
 		SocksPort:     socksPort,
 		ConferenceID:  conferenceID,
+		RoomURL:       roomInput,
 		OAuthToken:    oauthToken,
 		MasterSecret:  masterSecret,
+		YandexCookies: yandexCookies,
 	}
 
 	configPath := p.getConfigPath()
@@ -202,8 +219,8 @@ func (p *Program) saveConfig(dns, encryptionKey, socksPort, conferenceID, oauthT
 	log("Configuration saved to: %s", configPath)
 
 	// Save secrets to platform-native secure storage
-	if masterSecret != "" || oauthToken != "" {
-		if err := saveSecrets(masterSecret, oauthToken); err != nil {
+	if masterSecret != "" || oauthToken != "" || yandexCookies != "" {
+		if err := saveSecrets(masterSecret, oauthToken, yandexCookies); err != nil {
 			log("WARNING: Could not save secrets to secure storage: %v", err)
 		} else {
 			log("Secrets saved to secure storage (%s)", secretStorageType())
