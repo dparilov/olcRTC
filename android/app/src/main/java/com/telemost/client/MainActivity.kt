@@ -21,6 +21,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -105,6 +106,12 @@ private fun MainScreen(controller: TelemostTunnelController, onLogin: () -> Unit
         var masterSecret by remember { mutableStateOf(controller.getMasterSecret()) }
         var roomUrl by remember { mutableStateOf(controller.getRoomUrl()) }
         var validationMsg by remember { mutableStateOf("") }
+
+        // Sync roomUrl from controller when meeting changes (after Create & Launch)
+        LaunchedEffect(meeting) {
+            val saved = controller.getRoomUrl()
+            if (saved.isNotBlank()) roomUrl = saved
+        }
 
         // Secret status
         Text(
