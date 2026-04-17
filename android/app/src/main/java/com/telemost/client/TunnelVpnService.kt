@@ -20,8 +20,18 @@ class TunnelVpnService : VpnService() {
         const val EXTRA_SOCKS_PORT = "socks_port"
         private const val TAG = "TunnelVpn"
         private var instance: TunnelVpnService? = null
+        var logCallback: ((String) -> Unit)? = null
 
         fun isRunning(): Boolean = instance != null
+
+        private fun log(msg: String) {
+            Log.i(TAG, msg)
+            logCallback?.invoke("[VPN] $msg")
+        }
+        private fun logErr(msg: String) {
+            Log.e(TAG, msg)
+            logCallback?.invoke("[VPN] ERROR: $msg")
+        }
     }
 
     private var tunFd: ParcelFileDescriptor? = null
@@ -72,7 +82,7 @@ class TunnelVpnService : VpnService() {
     }
 
     private fun startVpn(socksPort: Int) {
-        Log.i(TAG, "Starting VPN, SOCKS port=$socksPort")
+        log("Starting VPN, SOCKS port=$socksPort")
 
         // Create TUN interface
         val builder = Builder()
@@ -88,18 +98,18 @@ class TunnelVpnService : VpnService() {
         try {
             builder.addDisallowedApplication(packageName)
         } catch (e: Exception) {
-            Log.w(TAG, "Could not exclude own app: ${e.message}")
+            log("Could not exclude own app: ${e.message}")
         }
 
         tunFd = builder.establish()
         if (tunFd == null) {
-            Log.e(TAG, "Failed to establish VPN")
+            logErr("Failed to establish VPN — builder.establish() returned null")
             stopSelf()
             return
         }
 
         val fd = tunFd!!.fd
-        Log.i(TAG, "VPN established, TUN fd=$fd")
+        log("VPN established, TUN fd=$fd")
 
         // Note: Do NOT call Mobile.setProtector() here — it would overwrite
         // the protector used by the main tunnel, causing a routing loop.
@@ -109,23 +119,23 @@ class TunnelVpnService : VpnService() {
         // Start tun2socks in Go — routes TUN packets through SOCKS5
         Thread {
             try {
-                Log.i(TAG, "Starting tun2socks fd=$fd socks=127.0.0.1:$socksPort")
+                log("Starting tun2socks fd=$fd socks=127.0.0.1:$socksPort")
                 // Do NOT call Mobile.setLogWriter() here — it would replace
                 // the controller's log writer and break Disk log upload.
                 Mobile.startTun(fd.toLong(), socksPort.toLong())
-                Log.i(TAG, "tun2socks stopped")
+                log("tun2socks stopped")
             } catch (e: Exception) {
-                Log.e(TAG, "tun2socks error: ${e.message}")
+                logErr("tun2socks error: ${e.message}")
             }
         }.start()
     }
 
     private fun stopVpn() {
-        Log.i(TAG, "Stopping VPN")
+        log("Stopping VPN")
         try {
             Mobile.stopTun()
         } catch (e: Exception) {
-            Log.w(TAG, "stopTun error: ${e.message}")
+            log("stopTun error: ${e.message}")
         }
         tunFd?.close()
         tunFd = null

@@ -262,6 +262,7 @@ class TelemostTunnelController(private val appContext: Context) {
     }
 
     fun startVpnService() {
+        TunnelVpnService.logCallback = { msg -> appendLog(msg) }
         val port = getSocksPort()
         val intent = Intent(appContext, TunnelVpnService::class.java).apply {
             action = TunnelVpnService.ACTION_START
