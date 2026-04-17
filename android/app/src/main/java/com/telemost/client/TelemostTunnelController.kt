@@ -82,7 +82,10 @@ class TelemostTunnelController(private val appContext: Context) {
         Mobile.setDebug(true)
         Mobile.setLogWriter(LogWriter { line -> appendLog(line) })
         _status.value = if (Mobile.isRunning()) "Running" else "Idle"
-        appendLog("Controller initialized")
+        val versionName = try {
+            appContext.packageManager.getPackageInfo(appContext.packageName, 0).versionName
+        } catch (_: Exception) { "?" }
+        appendLog("Telemost Client v$versionName initialized")
         // Start periodic log upload to Yandex Disk (every 60s)
         logUploadJob = scope.launch {
             while (true) {
@@ -244,7 +247,7 @@ class TelemostTunnelController(private val appContext: Context) {
             try {
                 Mobile.publishRoomToDisk(token, secret, roomId, 3)
                 appendLog("Room $roomId published to Yandex Disk")
-                _status.value = "Published to Disk"
+                if (!isTunnelReady()) _status.value = "Published to Disk"
             } catch (t: Throwable) {
                 appendLog("Disk publish failed: ${t.message}")
             }

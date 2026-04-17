@@ -76,17 +76,16 @@ class TunnelVpnService : VpnService() {
         val fd = tunFd!!.fd
         Log.i(TAG, "VPN established, TUN fd=$fd")
 
-        // Protect tunnel sockets from VPN routing
-        Mobile.setProtector(object : mobile.SocketProtector {
-            override fun protect(fd: Long): Boolean {
-                return this@TunnelVpnService.protect(fd.toInt())
-            }
-        })
+        // Note: Do NOT call Mobile.setProtector() here — it would overwrite
+        // the protector used by the main tunnel, causing a routing loop.
+        // The main tunnel's protector (set during Mobile.start()) already
+        // protects WebRTC/SOCKS sockets from VPN routing.
 
         // Start tun2socks in Go — routes TUN packets through SOCKS5
         Thread {
             try {
                 Log.i(TAG, "Starting tun2socks fd=$fd socks=127.0.0.1:$socksPort")
+                Mobile.setLogWriter(mobile.LogWriter { msg -> Log.i(TAG, msg) })
                 Mobile.startTun(fd.toLong(), socksPort.toLong())
                 Log.i(TAG, "tun2socks stopped")
             } catch (e: Exception) {
