@@ -55,16 +55,28 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // Global crash catcher — logs to controller before process dies
+        // Global crash catcher — saves to prefs (survives crash) + triggers immediate upload
         val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, ex ->
             try {
                 val trace = ex.stackTraceToString().take(2000)
-                controller.appendLog("[CRASH] ${ex.javaClass.simpleName}: ${ex.message}\n$trace")
-                // Give log upload a moment
-                Thread.sleep(2000)
+                val crashMsg = "[CRASH] ${ex.javaClass.simpleName}: ${ex.message}\n$trace"
+                // Save to prefs so we can show it on next launch
+                applicationContext.getSharedPreferences("olcrtc", MODE_PRIVATE)
+                    .edit().putString("last_crash", crashMsg).commit()
+                controller.appendLog(crashMsg)
+                controller.uploadLogNow()
+                Thread.sleep(3000)
             } catch (_: Throwable) {}
             defaultHandler?.uncaughtException(thread, ex)
+        }
+        // Show previous crash if any
+        val lastCrash = applicationContext.getSharedPreferences("olcrtc", MODE_PRIVATE)
+            .getString("last_crash", null)
+        if (lastCrash != null) {
+            controller.appendLog("=== PREVIOUS CRASH ===\n$lastCrash\n=== END CRASH ===")
+            applicationContext.getSharedPreferences("olcrtc", MODE_PRIVATE)
+                .edit().remove("last_crash").apply()
         }
         setContent {
             MaterialTheme {

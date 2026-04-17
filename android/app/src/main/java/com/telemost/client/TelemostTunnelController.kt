@@ -369,6 +369,10 @@ class TelemostTunnelController(private val appContext: Context) {
         _logs.value = "Log cleared\n"
     }
 
+    fun uploadLogNow() {
+        try { sendLogToDisk() } catch (_: Throwable) {}
+    }
+
     fun sendLogToDisk() {
         val token = getOAuthToken()
         if (token.isBlank()) {
