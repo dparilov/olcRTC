@@ -85,3 +85,25 @@ We maintain a patched copy in `third_party/anet/` with linkname directives remov
 | `script/build-windows-client.sh` | Windows cross-compilation |
 | `script/ui.sh` | UI launcher |
 | `script/linux-testbed.sh` | Linux transport test harness |
+
+## Room Creation API
+
+### Official Yandex 360 API (наш текущий `CreateConference`)
+- Endpoint: `https://cloud-api.yandex.net/v1/telemost-api/conferences`
+- Auth: OAuth token с scope telemost:write
+- **Ограничение: только для аккаунтов Яндекс 360 для бизнеса**
+- Отве��: `{"id":"...","join_url":"https://telemost.yandex.ru/j/XXXX"}`
+
+### Frontend API (kulikov0 pattern — работает с любым Yandex аккаунтом)
+- Base: `https://cloud-api.yandex.ru/telemost_front/v2/telemost`
+- Auth: cookies из залогиненной Yandex сессии (не OAuth)
+- Create: `POST /conferences?next_gen_media_platform_allowed=true`
+- Connect: `GET /conferences/{uri}/connection?next_gen_media_platform_allowed=true&display_name=NAME&waiting_room_supported=true`
+- Возвращает: `peer_id, room_id, credentials, client_configuration (media_server_url, service_name, ice_servers)`
+- **Наш GetConnectionInfo уже использует этот endpoint для подключения**
+- **TODO: добавить создание комнат через frontend API с cookies (без OAuth)**
+
+### Важные параметры
+- `next_gen_media_platform_allowed=true` — роутит на новую SFU платформу
+- `X-Telemost-Client-Version` — kulikov0 фетчит реальную версию из JS бандла
+- `Client-Instance-Id` — UUID, генерируется на каждый запрос
