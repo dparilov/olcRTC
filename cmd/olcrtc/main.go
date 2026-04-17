@@ -321,6 +321,9 @@ func runDiscoverClient(ctx context.Context, cfg config) error {
 
 	previousSecret := os.Getenv("OLCRTC_PREVIOUS_SECRET") // rotation window support
 
+	var lastRoomID string
+	var lastRecordID string // replay dedup: reject re-seen record_id
+
 	// Retry loop: on conference end, re-fetch room from Disk and reconnect
 	for attempt := 1; ; attempt++ {
 		log.Printf("[DISCOVER] Attempt %d: fetching room from Yandex Disk...", attempt)
@@ -345,6 +348,26 @@ func runDiscoverClient(ctx context.Context, cfg config) error {
 			}
 		}
 
+		// Replay dedup: skip if same record_id already processed
+		if record.RecordID != "" && record.RecordID == lastRecordID {
+			select {
+			case <-time.After(10 * time.Second):
+				continue
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+
+		// Skip if same room already connected/processed
+		if record.RoomID == lastRoomID {
+			select {
+			case <-time.After(10 * time.Second):
+				continue
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+
 		// Use the secret that matched for key derivation
 		secret := cfg.masterSecret
 		if matched == 2 {
@@ -354,6 +377,9 @@ func runDiscoverClient(ctx context.Context, cfg config) error {
 
 		keyHex := rendezvous.DeriveKey(secret, record.RoomID)
 		log.Printf("[DISCOVER] Verified room: %s (sig OK, key_version=%d)", record.RoomURL, record.KeyVersion)
+
+		lastRoomID = record.RoomID
+		lastRecordID = record.RecordID
 
 		err = client.Run(
 			ctx,
@@ -371,6 +397,8 @@ func runDiscoverClient(ctx context.Context, cfg config) error {
 		}
 
 		log.Printf("[DISCOVER] Connection ended: %v. Re-fetching room in 5s...", err)
+		lastRoomID = ""
+		lastRecordID = ""
 		select {
 		case <-time.After(5 * time.Second):
 		case <-ctx.Done():
