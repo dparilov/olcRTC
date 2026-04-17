@@ -271,7 +271,11 @@ class TelemostTunnelController(private val appContext: Context) {
                 action = TunnelVpnService.ACTION_START
                 putExtra(TunnelVpnService.EXTRA_SOCKS_PORT, port)
             }
-            appContext.startService(intent)
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                appContext.startForegroundService(intent)
+            } else {
+                appContext.startService(intent)
+            }
             appendLog("VPN service started (port=$port)")
         } catch (t: Throwable) {
             appendLog("[VPN] ERROR starting service: ${t.message}")
