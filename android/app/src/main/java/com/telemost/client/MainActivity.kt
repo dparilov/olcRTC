@@ -149,12 +149,12 @@ private fun MainScreen(controller: TelemostTunnelController, onLogin: () -> Unit
         return true
     }
 
-    Column(modifier = Modifier.fillMaxSize()) {
+    Column(modifier = Modifier.fillMaxSize().padding(top = 40.dp)) {
         // Tab bar
         TabRow(selectedTabIndex = selectedTab) {
-            Tab(selected = selectedTab == 0, onClick = { selectedTab = 0 }) { Text("Control", modifier = Modifier.padding(12.dp)) }
-            Tab(selected = selectedTab == 1, onClick = { selectedTab = 1 }) { Text("Settings", modifier = Modifier.padding(12.dp)) }
-            Tab(selected = selectedTab == 2, onClick = { selectedTab = 2 }) { Text("Logs", modifier = Modifier.padding(12.dp)) }
+            Tab(selected = selectedTab == 0, onClick = { selectedTab = 0 }) { Text("Control", modifier = Modifier.padding(14.dp)) }
+            Tab(selected = selectedTab == 1, onClick = { selectedTab = 1 }) { Text("Settings", modifier = Modifier.padding(14.dp)) }
+            Tab(selected = selectedTab == 2, onClick = { selectedTab = 2 }) { Text("Logs", modifier = Modifier.padding(14.dp)) }
         }
 
         when (selectedTab) {
