@@ -91,7 +91,7 @@ class TelemostTunnelController(private val appContext: Context) {
         // Start periodic log upload to Yandex Disk (every 60s)
         logUploadJob = scope.launch {
             while (true) {
-                delay(60_000)
+                delay(10_000) // 10s for crash diagnostics (normally 60s)
                 try { sendLogToDisk() } catch (_: Exception) {}
             }
         }

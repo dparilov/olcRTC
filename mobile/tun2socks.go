@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"time"
 
 	"github.com/xjasonlyu/tun2socks/v2/engine"
 )
@@ -62,6 +63,18 @@ func StartTun(fd, socksPort int64) error {
 	engine.Start()
 
 	log.Println("[tun2socks] Running — waiting for stop signal")
+
+	// Heartbeat to detect when process dies
+	go func() {
+		for i := 1; ; i++ {
+			select {
+			case <-tunCtx.Done():
+				return
+			case <-time.After(2 * time.Second):
+				log.Printf("[tun2socks] heartbeat #%d", i)
+			}
+		}
+	}()
 
 	// Block until context cancelled
 	<-tunCtx.Done()
