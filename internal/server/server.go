@@ -44,7 +44,9 @@ type ConnectRequest struct {
 	Port int    `json:"port"`
 }
 
-func Run(ctx context.Context, roomURL, keyHex string, duo bool, dnsServer, socksProxyAddr string, socksProxyPort int) error {
+// Run starts the server. Optional onReady callbacks are invoked after all peers connect
+// (the actual readiness boundary for the control-plane).
+func Run(ctx context.Context, roomURL, keyHex string, duo bool, dnsServer, socksProxyAddr string, socksProxyPort int, onReady ...func()) error {
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	var key []byte
@@ -182,6 +184,12 @@ func Run(ctx context.Context, roomURL, keyHex string, duo bool, dnsServer, socks
 			defer s.wg.Done()
 			peer.WatchConnection(runCtx)
 		}()
+	}
+
+	// === Readiness boundary: all peers connected, server ready to handle traffic ===
+	log.Println("[SERVER] All peers connected — server ready")
+	for _, cb := range onReady {
+		cb()
 	}
 
 	err = s.run(runCtx)

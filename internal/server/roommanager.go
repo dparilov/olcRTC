@@ -230,6 +230,17 @@ func (rm *RoomManager) serveHTTP(ctx context.Context) {
 		// after the server-side peer connection is established.
 		rm.lastRecordID = record.RecordID
 		log.Printf("[ROOM-MGR] Intent starting — room %s join initiated (not yet ready)", record.RoomID)
+
+		// Server-side timeout: if not ready within 30s, mark failed
+		go func(rid string) {
+			time.Sleep(30 * time.Second)
+			rm.intentAPI.mu.RLock()
+			entry, ok := rm.intentAPI.intents[rid]
+			rm.intentAPI.mu.RUnlock()
+			if ok && entry.State == IntentStarting {
+				rm.intentAPI.UpdateState(rid, IntentFailed, "server-side timeout: room did not become ready within 30s")
+			}
+		}(record.RecordID)
 	})
 	rm.intentAPI.RegisterRoutes(mux)
 

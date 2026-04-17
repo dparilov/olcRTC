@@ -272,14 +272,6 @@ func runAutoRoomServer(ctx context.Context, cfg config) error {
 		go func() {
 			defer wg.Done()
 			log.Printf("[AUTO-ROOM] Starting server for room: %s", roomURL)
-			// Signal ready after a short delay to allow peer connection
-			// (server.Run blocks; peers connect within first few seconds)
-			go func() {
-				time.Sleep(8 * time.Second)
-				if serverCtx.Err() == nil {
-					rm.MarkIntentReady()
-				}
-			}()
 			if err := server.Run(
 				serverCtx,
 				roomURL,
@@ -288,6 +280,7 @@ func runAutoRoomServer(ctx context.Context, cfg config) error {
 				cfg.dnsServer,
 				cfg.socksProxyAddr,
 				cfg.socksProxyPort,
+				func() { rm.MarkIntentReady() }, // real readiness: all peers connected
 			); err != nil {
 				log.Printf("[AUTO-ROOM] Server error: %v", err)
 				rm.MarkIntentFailed(err.Error())
