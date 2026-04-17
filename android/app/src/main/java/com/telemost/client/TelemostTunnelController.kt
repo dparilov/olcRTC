@@ -424,23 +424,28 @@ class TelemostTunnelController(private val appContext: Context) {
                 _diagnostics.value = "Diagnostics available (manual start recommended)"
                 val port = getSocksPort()
                 appendLog("Tunnel ready on local SOCKS port $port")
-                // Detect external IP through the tunnel
+                // Detect external IP through the tunnel (retry — server may still be connecting to SFU)
                 scope.launch {
-                    try {
-                        val proxy = java.net.Proxy(java.net.Proxy.Type.SOCKS, java.net.InetSocketAddress("127.0.0.1", port))
-                        val conn = java.net.URL("https://ifconfig.me/all.json").openConnection(proxy) as java.net.HttpURLConnection
-                        conn.connectTimeout = 15000
-                        conn.readTimeout = 15000
-                        val json = conn.inputStream.bufferedReader().readText()
-                        conn.disconnect()
-                        val obj = org.json.JSONObject(json)
-                        val ip = obj.optString("ip_addr", "unknown")
-                        val country = obj.optString("country", "unknown")
-                        _status.value = "Connected — IP: $ip ($country)"
-                        appendLog("External IP: $ip ($country)")
-                    } catch (t: Throwable) {
-                        appendLog("IP detection: ${t.message}")
+                    for (attempt in 1..5) {
+                        try {
+                            val proxy = java.net.Proxy(java.net.Proxy.Type.SOCKS, java.net.InetSocketAddress("127.0.0.1", port))
+                            val conn = java.net.URL("https://ifconfig.me/all.json").openConnection(proxy) as java.net.HttpURLConnection
+                            conn.connectTimeout = 15000
+                            conn.readTimeout = 15000
+                            val json = conn.inputStream.bufferedReader().readText()
+                            conn.disconnect()
+                            val obj = org.json.JSONObject(json)
+                            val ip = obj.optString("ip_addr", "unknown")
+                            val country = obj.optString("country", "unknown")
+                            _status.value = "Connected — IP: $ip ($country)"
+                            appendLog("External IP: $ip ($country)")
+                            return@launch
+                        } catch (t: Throwable) {
+                            appendLog("IP detection attempt $attempt/5: ${t.message}")
+                            if (attempt < 5) kotlinx.coroutines.delay(3000L)
+                        }
                     }
+                    appendLog("IP detection failed after 5 attempts")
                 }
                 scheduleReconnectWatchdog()
             } catch (t: Throwable) {
