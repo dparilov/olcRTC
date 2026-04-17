@@ -321,8 +321,13 @@ class TelemostTunnelController(private val appContext: Context) {
             runCatching { DiagnosticsRunner.runAll("127.0.0.1", getSocksPort()) }
                 .onSuccess {
                     if (isTunnelReady()) {
-                        _diagnostics.value = "Diagnostics finished"
+                        _diagnostics.value = it
                         appendLog(it)
+                        // Extract IP from diagnostics and update status
+                        val ipMatch = Regex("External IP: (.+)").find(it)
+                        if (ipMatch != null) {
+                            _status.value = "Connected \u2014 IP: ${ipMatch.groupValues[1]}"
+                        }
                     } else {
                         _diagnostics.value = "Diagnostics deferred due to reconnect"
                         appendLog("Diagnostics results discarded: tunnel state changed to ${_status.value}")
