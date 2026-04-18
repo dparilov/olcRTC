@@ -732,7 +732,13 @@ class TelemostTunnelController(private val appContext: Context) {
                 }
                 val keyHex = Mobile.deriveKeyFromSecret(masterSecret, roomId)
                 val socksPort = getSocksPort()
-                Mobile.start(roomId, keyHex, socksPort.toLong(), false, "", "")
+                // Stop any previous tunnel before starting new one
+                if (Mobile.isRunning()) {
+                    appendLog("Stopping previous tunnel before new start")
+                    try { Mobile.stop() } catch (_: Exception) {}
+                    Thread.sleep(1000)
+                }
+                Mobile.start(roomId, keyHex, socksPort.toLong(), false, "", "1.1.1.1:53")
                 _status.value = "Connecting to Telemost"
                 appendLog("Mobile.start completed, waiting ready")
                 // Start foreground service to keep connection alive
