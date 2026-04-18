@@ -225,6 +225,27 @@ private fun MainScreen(controller: TelemostTunnelController, onLogin: () -> Unit
                     modifier = Modifier.fillMaxWidth()
                 ) { Text("Create & Launch") }
 
+                // VPN mode toggle — always visible
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+                ) {
+                    Text("VPN mode (all traffic)")
+                    Switch(
+                        checked = controller.isVpnMode(),
+                        enabled = status.contains("SOCKS ready") || status.startsWith("Connected") || status == "Running",
+                        onCheckedChange = { enabled ->
+                            try {
+                                controller.setVpnMode(enabled)
+                                if (enabled) onVpnRequest() else controller.stopVpnService()
+                            } catch (t: Throwable) {
+                                controller.appendLog("[VPN] CRASH in toggle: ${t.javaClass.simpleName}: ${t.message}")
+                            }
+                        }
+                    )
+                }
+
                 // === ADVANCED MODE CONTROLS ===
                 if (advancedMode) {
                     Text("Advanced Controls", style = MaterialTheme.typography.titleSmall)
