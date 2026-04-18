@@ -414,8 +414,9 @@ func runDiscoverClient(ctx context.Context, cfg config) error {
 }
 
 func runWatchServer(ctx context.Context, cfg config) error {
+	// OAuth is optional for server — without it, Disk fallback is disabled but IntentAPI works
 	if cfg.oauthToken == "" {
-		return fmt.Errorf("OLCRTC_OAUTH_TOKEN required for --discover server mode")
+		log.Println("[WATCH-SRV] No OAuth token — Disk fallback disabled, API-only mode")
 	}
 	if cfg.masterSecret == "" {
 		return fmt.Errorf("OLCRTC_MASTER_SECRET required for --discover server mode")
