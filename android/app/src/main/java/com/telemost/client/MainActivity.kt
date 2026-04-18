@@ -44,7 +44,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 
-private const val APP_VERSION = "0.9.1"
+private const val APP_VERSION = "0.9.3"
 
 class MainActivity : ComponentActivity() {
     private val controller by lazy { TelemostTunnelController(applicationContext) }
@@ -343,10 +343,8 @@ private fun MainScreen(controller: TelemostTunnelController, onLogin: () -> Unit
                     placeholder = { Text("your-vps-ip") }
                 )
 
-                // Tenant status (reactive — updates after re-registration)
+                // Tenant status
                 val currentTenantId = controller.getTenantId()
-                // Force recomposition when logs change (tenant registration writes to log)
-                val _ = logs
                 if (currentTenantId.isNotBlank()) {
                     Text("\u2713 Tenant: $currentTenantId", style = MaterialTheme.typography.bodySmall)
                     Text("  SOCKS Port: ${controller.getSocksPort()}", style = MaterialTheme.typography.bodySmall)
