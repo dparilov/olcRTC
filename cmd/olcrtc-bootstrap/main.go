@@ -64,6 +64,15 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// Auto-start tenant runtime on registration (MT item 1, Option A)
+	// Must be after ctx creation since supervisor.StartTenant needs ctx
+	registry.OnRegistered = func(tenant *server.Tenant) {
+		log.Printf("[BOOTSTRAP] Auto-starting tenant %s (port %d)", tenant.TenantID, tenant.SOCKSPort)
+		if err := supervisor.StartTenant(ctx, tenant); err != nil {
+			log.Printf("[BOOTSTRAP] Failed to start tenant %s: %v", tenant.TenantID, err)
+		}
+	}
+
 	go func() {
 		sig := make(chan os.Signal, 1)
 		signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)

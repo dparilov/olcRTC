@@ -38,6 +38,10 @@ type TenantRegistry struct {
 	portEnd  int                // end of port range
 
 	stateDir string // directory for state persistence
+
+	// OnRegistered is called after a new tenant is registered.
+	// Bootstrap server uses this to auto-start the tenant runtime process.
+	OnRegistered func(tenant *Tenant)
 }
 
 // NewTenantRegistry creates a new registry with the given port range.
@@ -115,6 +119,11 @@ func (r *TenantRegistry) Register(secret string) (*Tenant, error) {
 
 	// Persist state
 	r.saveStateLocked()
+
+	// Auto-start tenant runtime process (Option A from spec)
+	if r.OnRegistered != nil {
+		go r.OnRegistered(tenant)
+	}
 
 	return tenant, nil
 }
