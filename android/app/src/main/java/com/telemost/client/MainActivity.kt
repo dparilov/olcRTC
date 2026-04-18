@@ -62,6 +62,11 @@ class MainActivity : ComponentActivity() {
     ) { result ->
         if (result.resultCode == RESULT_OK) {
             val cookies = result.data?.getStringExtra(YandexLoginActivity.EXTRA_COOKIES) ?: ""
+            val token = result.data?.getStringExtra(YandexLoginActivity.EXTRA_OAUTH_TOKEN) ?: ""
+            if (token.isNotBlank()) {
+                controller.setOAuthToken(token)
+                controller.appendLog("[SSO] OAuth token received and saved")
+            }
             if (cookies.isNotBlank()) {
                 controller.setYandexCookies(cookies)
             }
