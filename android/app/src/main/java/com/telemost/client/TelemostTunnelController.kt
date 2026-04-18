@@ -240,6 +240,10 @@ class TelemostTunnelController(private val appContext: Context) {
 
     fun getTenantId(): String = prefs.getString("tenant_id", "") ?: ""
 
+    fun updateTenantId(id: String) {
+        _tenantId.value = id
+    }
+
     /**
      * Send signed room intent to server via direct API.
      * Returns record_id on success, null on failure.

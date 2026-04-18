@@ -384,6 +384,7 @@ private fun MainScreen(controller: TelemostTunnelController, onLogin: () -> Unit
                                     val sp = json.optInt("socks_port", 0)
                                     if (sp > 0) controller.setSocksPort(sp)
                                     controller.appendLog("[SETTINGS] Tenant registered: $tid port=$sp")
+                                    controller.updateTenantId(tid)
                                     tenantStatus = "created"
                                     validationMsg = "Tenant registered: $tid"
                                 } else {
