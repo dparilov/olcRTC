@@ -20,8 +20,8 @@ type Tenant struct {
 	SecretHash     string    `json:"secret_hash"`      // SHA256(secret)[:16] for uniqueness
 	Secret         string    `json:"-"`                 // raw secret, NOT persisted to state file
 	OAuthToken     string    `json:"-"`                 // raw OAuth token, NOT persisted to state file
-	SOCKSPort      int       `json:"socks_port"`        // server-assigned stable port
-	APIPort        int       `json:"api_port"`          // tenant runtime API port
+	SOCKSPort      int       `json:"socks_port"`        // server-assigned stable SOCKS port
+	APIPort        int       `json:"api_port"`          // tenant runtime API port (SOCKS + 7000, guaranteed no collision with bootstrap 8080)
 	FallbackEnabled bool     `json:"fallback_enabled"`
 	DiskPath       string    `json:"disk_path"`         // tenant-specific Disk path
 	Status         string    `json:"status"`            // registered / active / idle / disabled
@@ -54,10 +54,11 @@ func NewTenantRegistry(portStart, portEnd int, stateDir string) *TenantRegistry 
 	return r
 }
 
-// secretFingerprint returns the first 16 hex chars of SHA256(secret).
+// secretFingerprint returns the first 32 hex chars of SHA256(secret).
+// 32 hex = 128 bits — sufficient for uniqueness with no realistic collision risk.
 func secretFingerprint(secret string) string {
 	h := sha256.Sum256([]byte(secret))
-	return hex.EncodeToString(h[:])[:16]
+	return hex.EncodeToString(h[:])[:32]
 }
 
 // Register creates a new tenant or returns existing if same secret.
@@ -99,7 +100,7 @@ func (r *TenantRegistry) Register(secret string) (*Tenant, error) {
 		SecretHash:      hash,
 		Secret:          secret,
 		SOCKSPort:       port,
-		APIPort:         port + 7000, // API port = SOCKS port + 7000 (e.g., 1080 -> 8080)
+		APIPort:         port + 7001, // API port = SOCKS port + 7001 (e.g., 1080 -> 8081, avoids bootstrap 8080)
 		FallbackEnabled: false,
 		DiskPath:        fmt.Sprintf("app:/olcrtc/tenants/%s/active-room.json", tenantID),
 		Status:          "registered",
@@ -351,21 +352,27 @@ func (r *TenantRegistry) handleOAuth(w http.ResponseWriter, req *http.Request) {
 	})
 }
 
-// GET /tenant/config?tenant_id=xxx&secret=yyy
+// POST /tenant/config — retrieve tenant runtime info (secret in body, not query string)
 func (r *TenantRegistry) handleConfig(w http.ResponseWriter, req *http.Request) {
-	if req.Method != http.MethodGet {
-		r.jsonError(w, http.StatusMethodNotAllowed, "GET required")
+	if req.Method != http.MethodPost {
+		r.jsonError(w, http.StatusMethodNotAllowed, "POST required")
 		return
 	}
 
-	tenantID := req.URL.Query().Get("tenant_id")
-	secret := req.URL.Query().Get("secret")
+	var body struct {
+		TenantID string `json:"tenant_id"`
+		Secret   string `json:"secret"`
+	}
+	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+		r.jsonError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
 
 	var tenant *Tenant
-	if tenantID != "" {
-		tenant = r.GetTenant(tenantID)
-	} else if secret != "" {
-		tenant = r.GetBySecret(secret)
+	if body.TenantID != "" {
+		tenant = r.GetTenant(body.TenantID)
+	} else if body.Secret != "" {
+		tenant = r.GetBySecret(body.Secret)
 	}
 
 	if tenant == nil {
@@ -373,8 +380,8 @@ func (r *TenantRegistry) handleConfig(w http.ResponseWriter, req *http.Request) 
 		return
 	}
 
-	// Verify secret if provided
-	if secret != "" && secretFingerprint(secret) != tenant.SecretHash {
+	// Verify secret
+	if body.Secret != "" && secretFingerprint(body.Secret) != tenant.SecretHash {
 		r.jsonError(w, http.StatusForbidden, "secret mismatch")
 		return
 	}

@@ -126,7 +126,10 @@ func parseFlags() config {
 	flag.StringVar(&cfg.dnsServer, "dns", "1.1.1.1:53", "DNS server (default: Cloudflare 1.1.1.1)")
 	flag.StringVar(&cfg.socksProxyAddr, "socks-proxy", "", "SOCKS5 proxy address (server only)")
 	flag.IntVar(&cfg.socksProxyPort, "socks-proxy-port", 1080, "SOCKS5 proxy port (server only)")
-	flag.BoolVar(&cfg.autoRoom, "auto-room", false, "Auto-create and rotate Telemost rooms (server only)")
+	// DEPRECATED: --auto-room is legacy. Canonical model: client creates rooms,
+	// server joins via room intent (direct API or Disk fallback).
+	// Kept for backward compatibility but not the primary supported path.
+	flag.BoolVar(&cfg.autoRoom, "auto-room", false, "[DEPRECATED] Auto-create rooms (legacy, use --discover instead)")
 	// NOTE: --oauth-token and --master-secret flags removed for security.
 	// Secrets must be passed via env vars: OLCRTC_OAUTH_TOKEN, OLCRTC_MASTER_SECRET
 
