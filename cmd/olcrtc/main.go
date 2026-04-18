@@ -448,7 +448,7 @@ func runWatchServer(ctx context.Context, cfg config) error {
 
 	// Start IntentAPI alongside Disk watcher (Direct API support)
 	if cfg.apiPort > 0 {
-		var roomMgrRef *server.RoomManager
+		
 		intentAPI := server.NewIntentAPI(cfg.masterSecret, previousSecret, cfg.socksPort)
 		mux := http.NewServeMux()
 		mux.HandleFunc("/api/health", func(w http.ResponseWriter, r *http.Request) {
@@ -468,18 +468,8 @@ func runWatchServer(ctx context.Context, cfg config) error {
 				}
 			}
 			// Directly switch to the room — primary action
-			roomURL := "https://telemost.yandex.ru/j/" + record.RoomID
-			if roomMgrRef != nil {
-				roomMgrRef.TriggerNewRoom(roomURL, keyHex)
-			} else {
-				log.Printf("[WATCH-SRV] roomMgrRef nil - waiting 2s for init")
-				time.Sleep(2 * time.Second)
-				if roomMgrRef != nil {
-					roomMgrRef.TriggerNewRoom(roomURL, keyHex)
-				} else {
-					log.Printf("[WATCH-SRV] roomMgrRef still nil - marking ready only")
-				}
-			}
+			intentAPI.UpdateState(record.RecordID, server.IntentReady, "")
+			intentAPI.UpdateState(record.RecordID, server.IntentReady, "")
 			log.Printf("[WATCH-SRV] Room switch initiated for %s", record.RoomID)
 		})
 		srv := &http.Server{Addr: fmt.Sprintf("0.0.0.0:%d", cfg.apiPort), Handler: mux}
