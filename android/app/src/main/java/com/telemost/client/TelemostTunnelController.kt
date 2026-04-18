@@ -687,7 +687,7 @@ class TelemostTunnelController(private val appContext: Context) {
         }
         scope.launch {
             try {
-                val logContent = _logs.value
+                val logContent = try { java.io.File(appContext.filesDir, "olcrtc-log.txt").readText() } catch (_: Exception) { _logs.value }
                 val timestamp = java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US).format(java.util.Date())
                 val filename = "olcrtc-android-log-$timestamp.txt"
                 appendLog("Uploading log to Yandex Disk ($filename)...")
@@ -836,6 +836,11 @@ class TelemostTunnelController(private val appContext: Context) {
 
     fun appendLog(line: String) {
         _logs.value += if (_logs.value.endsWith("\n")) "$line\n" else "\n$line\n"
+        // Also persist to file for reliable upload
+        try {
+            val f = java.io.File(appContext.filesDir, "olcrtc-log.txt")
+            f.appendText("$line\n")
+        } catch (_: Exception) {}
     }
 
     private fun scheduleReconnectWatchdog() {
