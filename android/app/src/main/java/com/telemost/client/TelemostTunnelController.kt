@@ -207,6 +207,11 @@ class TelemostTunnelController(private val appContext: Context) {
                 val json = org.json.JSONObject(body)
                 val status = json.optString("status", "")
                 val recordId = json.optString("record_id", "")
+                val assignedPort = json.optInt("socks_port", 0)
+                if (assignedPort > 0) {
+                    setSocksPort(assignedPort)
+                    appendLog("[API] Server assigned SOCKS port: $assignedPort")
+                }
                 appendLog("[API] Server: status=$status record_id=${recordId.take(8)}")
                 return recordId
             } else {

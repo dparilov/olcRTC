@@ -22,6 +22,7 @@ type RoomManager struct {
 	masterSecret   string
 	rotateInterval time.Duration
 	apiPort        int // 0 = no HTTP API
+	socksPort      int // server-assigned SOCKS port for clients
 
 	mu        sync.RWMutex
 	roomID    string
@@ -49,12 +50,13 @@ type RoomInfo struct {
 // masterSecret: shared secret for deterministic key derivation
 // rotateInterval: how often to create a new room (e.g. 3h)
 // apiPort: HTTP port for /api/room (0 = disabled)
-func NewRoomManager(oauthToken, masterSecret string, rotateInterval time.Duration, apiPort int) *RoomManager {
+func NewRoomManager(oauthToken, masterSecret string, rotateInterval time.Duration, apiPort, socksPort int) *RoomManager {
 	return &RoomManager{
 		oauthToken:     oauthToken,
 		masterSecret:   masterSecret,
 		rotateInterval: rotateInterval,
 		apiPort:        apiPort,
+		socksPort:      socksPort,
 	}
 }
 
@@ -201,7 +203,7 @@ func (rm *RoomManager) serveHTTP(ctx context.Context) {
 	if v := os.Getenv("OLCRTC_PREVIOUS_SECRET"); v != "" {
 		previousSecret = v
 	}
-	rm.intentAPI = NewIntentAPI(rm.masterSecret, previousSecret)
+	rm.intentAPI = NewIntentAPI(rm.masterSecret, previousSecret, rm.socksPort)
 	rm.intentAPI.SetAcceptedCallback(func(record *rendezvous.RoomRecord, keyHex string) {
 		rm.intentAPI.UpdateState(record.RecordID, IntentStarting, "")
 		log.Printf("[ROOM-MGR] Intent accepted — switching to room %s", record.RoomID)

@@ -12,7 +12,7 @@ import (
 )
 
 func TestIntentStateProgression_Ready(t *testing.T) {
-	api := NewIntentAPI("test-secret", "")
+	api := NewIntentAPI("test-secret", "", 1080)
 
 	// Simulate accepted intent
 	api.mu.Lock()
@@ -42,7 +42,7 @@ func TestIntentStateProgression_Ready(t *testing.T) {
 }
 
 func TestIntentStateProgression_Failed(t *testing.T) {
-	api := NewIntentAPI("test-secret", "")
+	api := NewIntentAPI("test-secret", "", 1080)
 
 	api.mu.Lock()
 	api.intents["test-fail-001"] = &IntentEntry{
@@ -68,7 +68,7 @@ func TestIntentStateProgression_Failed(t *testing.T) {
 }
 
 func TestIntentCleanupStale(t *testing.T) {
-	api := NewIntentAPI("test-secret", "")
+	api := NewIntentAPI("test-secret", "", 1080)
 
 	// Add a ready intent from 1 hour ago
 	api.mu.Lock()

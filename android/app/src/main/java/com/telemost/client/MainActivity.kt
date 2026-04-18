@@ -127,7 +127,7 @@ private fun MainScreen(controller: TelemostTunnelController, onLogin: () -> Unit
     var masterSecret by remember { mutableStateOf(controller.getMasterSecret()) }
     var oauthToken by remember { mutableStateOf(controller.getOAuthToken()) }
     var serverEndpoint by remember { mutableStateOf(controller.getServerEndpoint()) }
-    var socksPort by remember { mutableStateOf(controller.getSocksPort().toString()) }
+    // SOCKS port is server-assigned, not user-editable
     var roomUrl by remember { mutableStateOf(controller.getRoomUrl()) }
     var validationMsg by remember { mutableStateOf("") }
 
@@ -140,7 +140,6 @@ private fun MainScreen(controller: TelemostTunnelController, onLogin: () -> Unit
     fun saveSettings(): Boolean {
         if (masterSecret.isBlank()) { validationMsg = "Master secret is required"; return false }
         if (masterSecret.length < 8) { validationMsg = "Min 8 characters"; return false }
-        socksPort.toIntOrNull()?.let { controller.setSocksPort(it) }
         controller.setOAuthToken(oauthToken)
         controller.setMasterSecret(masterSecret)
         controller.setServerEndpoint(serverEndpoint)
@@ -169,6 +168,7 @@ private fun MainScreen(controller: TelemostTunnelController, onLogin: () -> Unit
                 Text("olcRTC", style = MaterialTheme.typography.headlineSmall)
                 Text("Status: $status")
                 Text("Room: $meeting")
+                Text("SOCKS Port: ${controller.getSocksPort()}")
 
                 // Status indicators
                 Text(
@@ -287,14 +287,9 @@ private fun MainScreen(controller: TelemostTunnelController, onLogin: () -> Unit
                     singleLine = true
                 )
 
-                Text("Connection", style = MaterialTheme.typography.titleSmall)
-                OutlinedTextField(
-                    value = socksPort,
-                    onValueChange = { socksPort = it },
-                    label = { Text("SOCKS Port") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true
-                )
+                // SOCKS Port is server-assigned, shown on Control tab
+                Text("SOCKS Port: ${controller.getSocksPort()} (server-assigned)",
+                    style = MaterialTheme.typography.bodySmall)
 
                 if (validationMsg.isNotBlank()) {
                     Text(validationMsg, color = MaterialTheme.colorScheme.error)

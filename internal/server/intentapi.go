@@ -29,6 +29,7 @@ type IntentEntry struct {
 	Record    *rendezvous.RoomRecord `json:"record"`
 	State     IntentState            `json:"state"`
 	Error     string                 `json:"error,omitempty"`
+	SOCKSPort int                    `json:"socks_port,omitempty"`
 	CreatedAt time.Time              `json:"created_at"`
 	UpdatedAt time.Time              `json:"updated_at"`
 }
@@ -37,6 +38,7 @@ type IntentEntry struct {
 type IntentAPI struct {
 	masterSecret   string
 	previousSecret string
+	socksPort      int // server-assigned SOCKS port for this server instance
 
 	mu      sync.RWMutex
 	intents map[string]*IntentEntry // keyed by record_id
@@ -47,10 +49,12 @@ type IntentAPI struct {
 }
 
 // NewIntentAPI creates a new room intent API handler.
-func NewIntentAPI(masterSecret, previousSecret string) *IntentAPI {
+// socksPort is the server-assigned SOCKS port returned to clients.
+func NewIntentAPI(masterSecret, previousSecret string, socksPort int) *IntentAPI {
 	return &IntentAPI{
 		masterSecret:   masterSecret,
 		previousSecret: previousSecret,
+		socksPort:      socksPort,
 		intents:        make(map[string]*IntentEntry),
 	}
 }
@@ -143,6 +147,7 @@ func (api *IntentAPI) handleRoomIntent(w http.ResponseWriter, r *http.Request) {
 	entry := &IntentEntry{
 		Record:    &record,
 		State:     IntentAccepted,
+		SOCKSPort: api.socksPort,
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
@@ -165,8 +170,9 @@ func (api *IntentAPI) handleRoomIntent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	api.jsonResponse(w, http.StatusAccepted, map[string]interface{}{
-		"status":    "accepted",
-		"record_id": record.RecordID,
+		"status":     "accepted",
+		"record_id":  record.RecordID,
+		"socks_port": api.socksPort,
 	})
 }
 
@@ -198,10 +204,11 @@ func (api *IntentAPI) handleRoomIntentStatus(w http.ResponseWriter, r *http.Requ
 	}
 
 	resp := map[string]interface{}{
-		"status":    string(entry.State),
-		"record_id": recordID,
-		"room_id":   entry.Record.RoomID,
-		"room_url":  entry.Record.RoomURL,
+		"status":     string(entry.State),
+		"record_id":  recordID,
+		"room_id":    entry.Record.RoomID,
+		"room_url":   entry.Record.RoomURL,
+		"socks_port": entry.SOCKSPort,
 	}
 	if entry.Error != "" {
 		resp["error"] = entry.Error

@@ -252,7 +252,7 @@ func runAutoRoomServer(ctx context.Context, cfg config) error {
 	}
 
 	rotateInterval := time.Duration(cfg.rotateHours) * time.Hour
-	rm := server.NewRoomManager(cfg.oauthToken, cfg.masterSecret, rotateInterval, cfg.apiPort)
+	rm := server.NewRoomManager(cfg.oauthToken, cfg.masterSecret, rotateInterval, cfg.apiPort, cfg.socksPort)
 
 	var serverCancel context.CancelFunc
 	var serverCtx context.Context
@@ -438,7 +438,7 @@ func runWatchServer(ctx context.Context, cfg config) error {
 
 	// Start IntentAPI alongside Disk watcher (Direct API support)
 	if cfg.apiPort > 0 {
-		intentAPI := server.NewIntentAPI(cfg.masterSecret, previousSecret)
+		intentAPI := server.NewIntentAPI(cfg.masterSecret, previousSecret, cfg.socksPort)
 		mux := http.NewServeMux()
 		mux.HandleFunc("/api/health", func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
