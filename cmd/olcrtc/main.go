@@ -446,6 +446,10 @@ func runWatchServer(ctx context.Context, cfg config) error {
 	log.Println("[WATCH-SRV]   Signature verification: ready")
 	log.Println("[WATCH-SRV] Self-check passed, entering active monitoring")
 
+	// Channel for intent callback to signal room to main loop
+	type intentRoom struct{ roomURL, keyHex string }
+	intentRoomCh := make(chan intentRoom, 1)
+
 	// Start IntentAPI alongside Disk watcher (Direct API support)
 	if cfg.apiPort > 0 {
 		
@@ -469,8 +473,14 @@ func runWatchServer(ctx context.Context, cfg config) error {
 			}
 			// Directly switch to the room — primary action
 			intentAPI.UpdateState(record.RecordID, server.IntentReady, "")
-			intentAPI.UpdateState(record.RecordID, server.IntentReady, "")
-			log.Printf("[WATCH-SRV] Room switch initiated for %s", record.RoomID)
+			// Signal main loop to start server.Run with this room
+			roomURL := "https://telemost.yandex.ru/j/" + record.RoomID
+			select {
+			case intentRoomCh <- intentRoom{roomURL, keyHex}:
+				log.Printf("[WATCH-SRV] Room sent to main loop: %s", record.RoomID)
+			default:
+				log.Printf("[WATCH-SRV] Room channel full, skipping")
+			}
 		})
 		srv := &http.Server{Addr: fmt.Sprintf("0.0.0.0:%d", cfg.apiPort), Handler: mux}
 		go func() {
@@ -486,6 +496,27 @@ func runWatchServer(ctx context.Context, cfg config) error {
 	var lastRecordID string // replay dedup: reject re-seen record_id
 
 	for {
+		// Check for intent-delivered room first
+		select {
+		case ir := <-intentRoomCh:
+			log.Printf("[WATCH-SRV] Room from intent API: %s", ir.roomURL)
+			srvCtx, srvCancel := context.WithCancel(ctx)
+			srvDone := make(chan error, 1)
+			go func() {
+				srvDone <- server.Run(srvCtx, ir.roomURL, ir.keyHex, cfg.duo, cfg.dnsServer, cfg.socksProxyAddr, cfg.socksProxyPort)
+			}()
+			select {
+			case err := <-srvDone:
+				log.Printf("[WATCH-SRV] Intent server exited: %v", err)
+				srvCancel()
+				continue
+			case <-ctx.Done():
+				srvCancel()
+				return ctx.Err()
+			}
+		default:
+		}
+
 		// Skip Disk polling if no OAuth (API-only mode)
 		if cfg.oauthToken == "" {
 			select {
