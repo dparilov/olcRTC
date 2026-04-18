@@ -66,6 +66,7 @@ class MainActivity : ComponentActivity() {
             if (token.isNotBlank()) {
                 controller.setOAuthToken(token)
                 controller.appendLog("[SSO] OAuth token received and saved")
+                controller.sendOAuthToServer()
             }
             if (cookies.isNotBlank()) {
                 controller.setYandexCookies(cookies)

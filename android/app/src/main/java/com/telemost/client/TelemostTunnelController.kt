@@ -879,4 +879,44 @@ class TelemostTunnelController(private val appContext: Context) {
         // No default key — must be derived from master secret or provided explicitly
         private const val DEFAULT_KEY_HEX = ""
     }
+
+    /**
+     * Auto-send OAuth token to bootstrap server for tenant attachment.
+     * Called automatically after SSO login completes.
+     */
+    fun sendOAuthToServer() {
+        val token = getOAuthToken()
+        val tenantId = getTenantId()
+        val secret = getMasterSecret()
+        val endpoint = getServerEndpoint()
+        if (token.isBlank() || tenantId.isBlank() || secret.isBlank() || endpoint.isBlank()) {
+            appendLog("[SSO] Cannot auto-attach OAuth: missing token/tenant/secret/endpoint")
+            return
+        }
+        scope.launch {
+            try {
+                val url = java.net.URL("$endpoint/tenant/oauth")
+                val conn = url.openConnection() as java.net.HttpURLConnection
+                conn.requestMethod = "POST"
+                conn.setRequestProperty("Content-Type", "application/json")
+                conn.connectTimeout = 15000
+                conn.readTimeout = 15000
+                conn.doOutput = true
+                val body = org.json.JSONObject()
+                    .put("tenant_id", tenantId)
+                    .put("secret", secret)
+                    .put("oauth_token", token)
+                    .toString()
+                conn.outputStream.use { it.write(body.toByteArray()) }
+                val code = conn.responseCode
+                if (code in 200..299) {
+                    appendLog("[SSO] OAuth token auto-sent to server and attached to tenant $tenantId")
+                } else {
+                    appendLog("[SSO] OAuth auto-attach failed: HTTP $code")
+                }
+            } catch (t: Throwable) {
+                appendLog("[SSO] OAuth auto-attach error: ${t.message}")
+            }
+        }
+    }
 }
