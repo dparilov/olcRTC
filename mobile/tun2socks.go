@@ -79,8 +79,10 @@ func StartTun(fd, socksPort int64) error {
 	// Block until context cancelled
 	<-tunCtx.Done()
 
-	engine.Stop()
-	log.Println("[tun2socks] Stopped")
+	// Do NOT call engine.Stop() — known to crash the process on Android
+	// (see VpnServiceDemo reference: "I don't recommend to call Engine.stop()")
+	// The TUN fd will be closed by VpnService, which releases all resources.
+	log.Println("[tun2socks] Context cancelled — stopped (fd will be closed by VpnService)")
 	return nil
 }
 

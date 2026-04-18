@@ -85,12 +85,14 @@ class TunnelVpnService : VpnService() {
         log("Starting VPN, SOCKS port=$socksPort")
 
         // Create TUN interface
+        // DNS: do NOT add addDnsServer() — our SOCKS5 doesn't support UDP ASSOCIATE,
+        // so UDP DNS through tun2socks would fail. Instead, let Android use Private DNS
+        // (DNS-over-TLS, TCP port 853) which goes through tun2socks → SOCKS5 CONNECT correctly.
+        // On Android 9+ Private DNS is enabled by default.
         val builder = Builder()
             .setSession("olcRTC Tunnel")
             .addAddress("10.0.0.2", 24)
             .addRoute("0.0.0.0", 0)
-            .addDnsServer("1.1.1.1")
-            .addDnsServer("8.8.8.8")
             .setMtu(1500)
             .setBlocking(true)
 
