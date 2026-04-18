@@ -4,9 +4,11 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -54,6 +56,60 @@ func main() {
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprintf(w, "ok")
+	})
+
+	// Shared frontdoor: /api/room-intent routes to correct tenant runtime
+	// Client always sends room-intent to bootstrap endpoint (Model B)
+	mux.HandleFunc("/api/room-intent", func(w http.ResponseWriter, r *http.Request) {
+		// Find tenant by trying all registered secrets to verify signature
+		tenants := registry.AllTenants()
+		for _, t := range tenants {
+			if t.APIPort > 0 {
+				// Forward to tenant runtime
+				targetURL := fmt.Sprintf("http://127.0.0.1:%d/api/room-intent", t.APIPort)
+				if r.URL.Path != "/api/room-intent" {
+					targetURL = fmt.Sprintf("http://127.0.0.1:%d%s", t.APIPort, r.URL.Path)
+				}
+				// Simple proxy: forward request body to tenant runtime
+				body, _ := io.ReadAll(r.Body)
+				resp, err := http.Post(targetURL, "application/json", bytes.NewReader(body))
+				if err != nil {
+					continue // try next tenant
+				}
+				defer resp.Body.Close()
+				respBody, _ := io.ReadAll(resp.Body)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(resp.StatusCode)
+				w.Write(respBody)
+				return
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		fmt.Fprintf(w, `{"status":"error","message":"no tenant runtime available"}`)
+	})
+	mux.HandleFunc("/api/room-intent/", func(w http.ResponseWriter, r *http.Request) {
+		// Status polling — forward to all tenants until one responds
+		tenants := registry.AllTenants()
+		for _, t := range tenants {
+			if t.APIPort > 0 {
+				targetURL := fmt.Sprintf("http://127.0.0.1:%d%s", t.APIPort, r.URL.Path)
+				resp, err := http.Get(targetURL)
+				if err != nil || resp.StatusCode == http.StatusNotFound {
+					if resp != nil { resp.Body.Close() }
+					continue
+				}
+				defer resp.Body.Close()
+				respBody, _ := io.ReadAll(resp.Body)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(resp.StatusCode)
+				w.Write(respBody)
+				return
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		fmt.Fprintf(w, `{"status":"unknown","message":"record not found in any tenant"}`)
 	})
 
 	// Start HTTP server
