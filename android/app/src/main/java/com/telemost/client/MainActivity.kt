@@ -151,6 +151,12 @@ private fun MainScreen(controller: TelemostTunnelController, onLogin: () -> Unit
     ) }
     var oauthStatus by remember { mutableStateOf("") }
 
+    // Sync oauthToken from controller (after SSO login updates prefs)
+    LaunchedEffect(logs) {
+        val saved = controller.getOAuthToken()
+        if (saved.isNotBlank() && saved != oauthToken) oauthToken = saved
+    }
+
     LaunchedEffect(meeting) {
         val saved = controller.getRoomUrl()
         if (saved.isNotBlank()) roomUrl = saved
