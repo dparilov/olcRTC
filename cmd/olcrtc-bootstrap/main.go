@@ -6,6 +6,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -15,6 +16,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/openlibrecommunity/olcrtc/internal/rendezvous"
 	"github.com/openlibrecommunity/olcrtc/internal/server"
 )
 
@@ -58,45 +60,82 @@ func main() {
 		fmt.Fprintf(w, "ok")
 	})
 
-	// Shared frontdoor: /api/room-intent routes to correct tenant runtime
+	// Shared frontdoor: POST /api/room-intent routes to correct tenant by signature
 	// Client always sends room-intent to bootstrap endpoint (Model B)
 	mux.HandleFunc("/api/room-intent", func(w http.ResponseWriter, r *http.Request) {
-		// Find tenant by trying all registered secrets to verify signature
-		tenants := registry.AllTenants()
-		for _, t := range tenants {
-			if t.APIPort > 0 {
-				// Forward to tenant runtime
-				targetURL := fmt.Sprintf("http://127.0.0.1:%d/api/room-intent", t.APIPort)
-				if r.URL.Path != "/api/room-intent" {
-					targetURL = fmt.Sprintf("http://127.0.0.1:%d%s", t.APIPort, r.URL.Path)
-				}
-				// Simple proxy: forward request body to tenant runtime
-				body, _ := io.ReadAll(r.Body)
-				resp, err := http.Post(targetURL, "application/json", bytes.NewReader(body))
-				if err != nil {
-					continue // try next tenant
-				}
-				defer resp.Body.Close()
-				respBody, _ := io.ReadAll(resp.Body)
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(resp.StatusCode)
-				w.Write(respBody)
-				return
-			}
+		if r.Method != http.MethodPost {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			fmt.Fprintf(w, `{"status":"error","message":"POST required"}`)
+			return
 		}
+
+		// Read and parse the body to extract the signed record
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			fmt.Fprintf(w, `{"status":"error","message":"failed to read body"}`)
+			return
+		}
+
+		var record rendezvous.RoomRecord
+		if err := json.Unmarshal(body, &record); err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			fmt.Fprintf(w, `{"status":"error","message":"invalid JSON"}`)
+			return
+		}
+
+		// Route to correct tenant by verifying signature against each tenant's secret
+		tenant := registry.FindBySignature(func(secret string) error {
+			return rendezvous.VerifyRecord(&record, secret)
+		})
+		if tenant == nil {
+			log.Printf("[BOOTSTRAP] room-intent: no tenant matched signature")
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusForbidden)
+			fmt.Fprintf(w, `{"status":"invalid_signature","message":"no tenant matched signature"}`)
+			return
+		}
+		if tenant.APIPort <= 0 {
+			log.Printf("[BOOTSTRAP] room-intent: tenant %s has no runtime", tenant.TenantID)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			fmt.Fprintf(w, `{"status":"error","message":"tenant runtime not available"}`)
+			return
+		}
+
+		// Forward to the matched tenant runtime
+		targetURL := fmt.Sprintf("http://127.0.0.1:%d/api/room-intent", tenant.APIPort)
+		log.Printf("[BOOTSTRAP] room-intent: routing to tenant %s (port %d)", tenant.TenantID, tenant.APIPort)
+		resp, err := http.Post(targetURL, "application/json", bytes.NewReader(body))
+		if err != nil {
+			log.Printf("[BOOTSTRAP] room-intent: forward failed: %v", err)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadGateway)
+			fmt.Fprintf(w, `{"status":"error","message":"tenant runtime unreachable"}`)
+			return
+		}
+		defer resp.Body.Close()
+		respBody, _ := io.ReadAll(resp.Body)
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusNotFound)
-		fmt.Fprintf(w, `{"status":"error","message":"no tenant runtime available"}`)
+		w.WriteHeader(resp.StatusCode)
+		w.Write(respBody)
 	})
+
+	// GET /api/room-intent/{record_id} — status polling proxy
+	// Iterates tenants until one owns the record (404 = try next)
 	mux.HandleFunc("/api/room-intent/", func(w http.ResponseWriter, r *http.Request) {
-		// Status polling — forward to all tenants until one responds
 		tenants := registry.AllTenants()
 		for _, t := range tenants {
 			if t.APIPort > 0 {
 				targetURL := fmt.Sprintf("http://127.0.0.1:%d%s", t.APIPort, r.URL.Path)
 				resp, err := http.Get(targetURL)
 				if err != nil || resp.StatusCode == http.StatusNotFound {
-					if resp != nil { resp.Body.Close() }
+					if resp != nil {
+						resp.Body.Close()
+					}
 					continue
 				}
 				defer resp.Body.Close()
