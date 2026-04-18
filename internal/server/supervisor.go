@@ -43,13 +43,14 @@ func (s *Supervisor) StartTenant(ctx context.Context, tenant *Tenant) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Check for duplicate
+	// Kill any existing process for this tenant before starting new one
 	if existing, ok := s.processes[tenant.TenantID]; ok {
-		if existing.Status == "running" {
-			log.Printf("[SUPERVISOR] Tenant %s already running (pid %d)", tenant.TenantID, existing.Cmd.Process.Pid)
-			return nil
+		if existing.Status == "running" && existing.Cmd != nil && existing.Cmd.Process != nil {
+			log.Printf("[SUPERVISOR] Killing old tenant %s (pid %d) before restart", tenant.TenantID, existing.Cmd.Process.Pid)
+			existing.Cancel()
+			existing.Cmd.Process.Kill()
+			existing.Status = "stopped"
 		}
-		// Previous process stopped/failed — allow restart
 	}
 
 	// Build command args for tenant runtime process
