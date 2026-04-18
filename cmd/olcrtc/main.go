@@ -200,6 +200,7 @@ func runMode(ctx context.Context, cfg config, errCh chan<- error) {
 		if cfg.discover {
 			errCh <- runWatchServer(ctx, cfg)
 		} else if cfg.autoRoom {
+			log.Println("WARNING: --auto-room is deprecated. Use --discover mode instead.")
 			errCh <- runAutoRoomServer(ctx, cfg)
 		} else {
 			roomURL := "https://telemost.yandex.ru/j/" + cfg.roomID
@@ -430,12 +431,17 @@ func runWatchServer(ctx context.Context, cfg config) error {
 	}
 	log.Println("[WATCH-SRV]   OAuth token: loaded")
 
-	// Test Disk read access
-	_, testErr := rendezvous.FetchRoom(cfg.oauthToken)
-	if testErr != nil {
-		return fmt.Errorf("startup self-check failed: Disk read test: %w", testErr)
+	// Test Disk read access (only if OAuth is available)
+	if cfg.oauthToken != "" {
+		_, testErr := rendezvous.FetchRoom(cfg.oauthToken)
+		if testErr != nil {
+			log.Printf("[WATCH-SRV]   Yandex Disk: WARNING %v", testErr)
+		} else {
+			log.Println("[WATCH-SRV]   Yandex Disk: accessible")
+		}
+	} else {
+		log.Println("[WATCH-SRV]   Yandex Disk: skipped (no OAuth)")
 	}
-	log.Println("[WATCH-SRV]   Yandex Disk: accessible")
 	log.Println("[WATCH-SRV]   Signature verification: ready")
 	log.Println("[WATCH-SRV] Self-check passed, entering active monitoring")
 
@@ -474,6 +480,16 @@ func runWatchServer(ctx context.Context, cfg config) error {
 	var lastRecordID string // replay dedup: reject re-seen record_id
 
 	for {
+		// Skip Disk polling if no OAuth (API-only mode)
+		if cfg.oauthToken == "" {
+			select {
+			case <-time.After(10 * time.Second):
+				continue
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+
 		log.Println("[WATCH-SRV] Polling Yandex Disk for room...")
 
 		record, matched, err := rendezvous.FetchAndVerifyRoom(cfg.oauthToken, cfg.masterSecret, previousSecret)
