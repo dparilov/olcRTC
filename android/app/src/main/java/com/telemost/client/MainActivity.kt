@@ -343,8 +343,10 @@ private fun MainScreen(controller: TelemostTunnelController, onLogin: () -> Unit
                     placeholder = { Text("your-vps-ip") }
                 )
 
-                // Tenant status
+                // Tenant status (reactive — updates after re-registration)
                 val currentTenantId = controller.getTenantId()
+                // Force recomposition when logs change (tenant registration writes to log)
+                val _ = logs
                 if (currentTenantId.isNotBlank()) {
                     Text("\u2713 Tenant: $currentTenantId", style = MaterialTheme.typography.bodySmall)
                     Text("  SOCKS Port: ${controller.getSocksPort()}", style = MaterialTheme.typography.bodySmall)
