@@ -19,7 +19,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
@@ -43,7 +42,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 
-private const val APP_VERSION = "0.9.0"
+private const val APP_VERSION = "0.9.1"
 
 class MainActivity : ComponentActivity() {
     private val controller by lazy { TelemostTunnelController(applicationContext) }
@@ -131,12 +130,19 @@ private fun MainScreen(controller: TelemostTunnelController, onLogin: () -> Unit
     var advancedMode by remember { mutableStateOf(false) }
     var versionTapCount by remember { mutableIntStateOf(0) }
     val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
 
     var masterSecret by remember { mutableStateOf(controller.getMasterSecret()) }
     var oauthToken by remember { mutableStateOf(controller.getOAuthToken()) }
     var serverEndpoint by remember { mutableStateOf(controller.getServerEndpoint()) }
     var roomUrl by remember { mutableStateOf(controller.getRoomUrl()) }
     var validationMsg by remember { mutableStateOf("") }
+
+    // Tenant lifecycle state
+    var tenantStatus by remember { mutableStateOf(
+        if (controller.getTenantId().isNotBlank()) "created" else "not created"
+    ) }
+    var oauthStatus by remember { mutableStateOf("") }
 
     LaunchedEffect(meeting) {
         val saved = controller.getRoomUrl()
@@ -188,7 +194,6 @@ private fun MainScreen(controller: TelemostTunnelController, onLogin: () -> Unit
                     Text("Diagnostics: $diagnostics", style = MaterialTheme.typography.bodySmall)
                 }
 
-                // Room URL field
                 OutlinedTextField(
                     value = roomUrl,
                     onValueChange = { roomUrl = it },
@@ -201,7 +206,6 @@ private fun MainScreen(controller: TelemostTunnelController, onLogin: () -> Unit
                     Text(validationMsg, color = MaterialTheme.colorScheme.error)
                 }
 
-                // Primary action — always visible
                 Button(
                     onClick = { if (saveSettings()) controller.createAndLaunch() },
                     modifier = Modifier.fillMaxWidth()
@@ -225,7 +229,6 @@ private fun MainScreen(controller: TelemostTunnelController, onLogin: () -> Unit
                         Button(onClick = { controller.rerunDiagnostics() }) { Text("Diagnostics") }
                     }
 
-                    // VPN mode toggle
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -246,7 +249,6 @@ private fun MainScreen(controller: TelemostTunnelController, onLogin: () -> Unit
                         )
                     }
 
-                    // Logs in advanced mode
                     Text("Logs:", style = MaterialTheme.typography.titleSmall)
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                         Button(onClick = { controller.clearLog() }) { Text("Clear") }
@@ -254,10 +256,8 @@ private fun MainScreen(controller: TelemostTunnelController, onLogin: () -> Unit
                     Text(logs, style = MaterialTheme.typography.bodySmall)
                 }
 
-                // Spacer to push version to bottom
                 Spacer(modifier = Modifier.height(24.dp))
 
-                // Version label — tap 5 times to enable advanced mode
                 Text(
                     text = "v$APP_VERSION" + if (advancedMode) " (advanced)" else "",
                     style = MaterialTheme.typography.bodySmall,
@@ -287,56 +287,164 @@ private fun MainScreen(controller: TelemostTunnelController, onLogin: () -> Unit
             ) {
                 Text("Settings", style = MaterialTheme.typography.headlineSmall)
 
-                Text("Security", style = MaterialTheme.typography.titleSmall)
+                // --- Tenant Configuration ---
+                Text("Tenant Configuration", style = MaterialTheme.typography.titleSmall)
+
                 OutlinedTextField(
                     value = masterSecret,
                     onValueChange = { masterSecret = it; validationMsg = "" },
-                    label = { Text("Master Secret (required)") },
+                    label = { Text("Master Secret") },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
                     visualTransformation = PasswordVisualTransformation()
                 )
 
-                Text("Server", style = MaterialTheme.typography.titleSmall)
                 OutlinedTextField(
                     value = serverEndpoint,
                     onValueChange = { serverEndpoint = it },
-                    label = { Text("Server Endpoint (optional)") },
+                    label = { Text("Server Endpoint") },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
-                    placeholder = { Text("http://your-vps:8080") }
+                    placeholder = { Text("your-vps-ip") }
                 )
 
+                // Tenant status
+                val currentTenantId = controller.getTenantId()
+                if (currentTenantId.isNotBlank()) {
+                    Text("\u2713 Tenant: $currentTenantId", style = MaterialTheme.typography.bodySmall)
+                    Text("  SOCKS Port: ${controller.getSocksPort()}", style = MaterialTheme.typography.bodySmall)
+                    tenantStatus = "created"
+                } else {
+                    Text("\u26A0 Tenant: not created", style = MaterialTheme.typography.bodySmall)
+                    tenantStatus = "not created"
+                }
+
+                // Create / Update Tenant button
+                val tenantButtonEnabled = masterSecret.length >= 8 && serverEndpoint.isNotBlank()
+                Button(
+                    onClick = {
+                        controller.setMasterSecret(masterSecret)
+                        controller.setServerEndpoint(serverEndpoint)
+                        val ep = controller.getServerEndpoint()
+                        coroutineScope.launch {
+                            validationMsg = "Registering tenant..."
+                            try {
+                                val url = java.net.URL("$ep/tenant/register")
+                                val conn = url.openConnection() as java.net.HttpURLConnection
+                                conn.requestMethod = "POST"
+                                conn.setRequestProperty("Content-Type", "application/json")
+                                conn.connectTimeout = 15000
+                                conn.readTimeout = 15000
+                                conn.doOutput = true
+                                val body = org.json.JSONObject().put("secret", masterSecret).toString()
+                                conn.outputStream.use { it.write(body.toByteArray()) }
+                                val code = conn.responseCode
+                                val resp = try { conn.inputStream.bufferedReader().readText() } catch (_: Exception) {
+                                    conn.errorStream?.bufferedReader()?.readText() ?: ""
+                                }
+                                if (code in 200..299) {
+                                    val json = org.json.JSONObject(resp)
+                                    val tid = json.optString("tenant_id", "")
+                                    val sp = json.optInt("socks_port", 0)
+                                    if (sp > 0) controller.setSocksPort(sp)
+                                    controller.appendLog("[SETTINGS] Tenant registered: $tid port=$sp")
+                                    tenantStatus = "created"
+                                    validationMsg = "Tenant registered: $tid"
+                                } else {
+                                    val json = try { org.json.JSONObject(resp) } catch (_: Exception) { null }
+                                    validationMsg = "Registration failed: ${json?.optString("message", resp) ?: resp}"
+                                }
+                            } catch (t: Throwable) {
+                                validationMsg = "Error: ${t.message}"
+                                controller.appendLog("[SETTINGS] Tenant registration error: ${t.message}")
+                            }
+                        }
+                    },
+                    enabled = tenantButtonEnabled,
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("Create / Update Tenant") }
+
+                // --- Yandex Account ---
+                Spacer(modifier = Modifier.height(8.dp))
                 Text("Yandex Account", style = MaterialTheme.typography.titleSmall)
+
                 Button(onClick = { onLogin() }, modifier = Modifier.fillMaxWidth()) {
                     Text("Login to Yandex")
                 }
-                Text(
-                    if (controller.hasYandexCookies()) "\u2713 Yandex logged in"
-                    else "\u26A0 Login required for room creation",
-                    style = MaterialTheme.typography.bodySmall
-                )
 
-                Text("Fallback", style = MaterialTheme.typography.titleSmall)
+                // Yandex status
+                if (controller.hasYandexCookies()) {
+                    Text("\u2713 Yandex cookies received for room creation", style = MaterialTheme.typography.bodySmall)
+                } else {
+                    Text("\u26A0 Login required for room creation", style = MaterialTheme.typography.bodySmall)
+                }
+
+                // --- OAuth / Fallback ---
+                Spacer(modifier = Modifier.height(8.dp))
+                Text("Fallback (Yandex Disk)", style = MaterialTheme.typography.titleSmall)
+
                 OutlinedTextField(
                     value = oauthToken,
                     onValueChange = { oauthToken = it },
-                    label = { Text("OAuth Token (for Disk fallback)") },
+                    label = { Text("OAuth Token") },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true
                 )
 
+                if (oauthToken.isNotBlank()) {
+                    Text("\u2713 OAuth token configured", style = MaterialTheme.typography.bodySmall)
+
+                    // Send OAuth to server button (if tenant exists)
+                    if (currentTenantId.isNotBlank()) {
+                        Button(
+                            onClick = {
+                                controller.setOAuthToken(oauthToken)
+                                val ep = controller.getServerEndpoint()
+                                coroutineScope.launch {
+                                    try {
+                                        val url = java.net.URL("$ep/tenant/oauth")
+                                        val conn = url.openConnection() as java.net.HttpURLConnection
+                                        conn.requestMethod = "POST"
+                                        conn.setRequestProperty("Content-Type", "application/json")
+                                        conn.connectTimeout = 15000
+                                        conn.readTimeout = 15000
+                                        conn.doOutput = true
+                                        val body = org.json.JSONObject()
+                                            .put("tenant_id", currentTenantId)
+                                            .put("secret", masterSecret)
+                                            .put("oauth_token", oauthToken)
+                                            .toString()
+                                        conn.outputStream.use { it.write(body.toByteArray()) }
+                                        val code = conn.responseCode
+                                        if (code in 200..299) {
+                                            oauthStatus = "attached"
+                                            validationMsg = "OAuth token sent to server and attached to tenant"
+                                            controller.appendLog("[SETTINGS] OAuth attached to tenant $currentTenantId")
+                                        } else {
+                                            validationMsg = "OAuth attach failed: HTTP $code"
+                                        }
+                                    } catch (t: Throwable) {
+                                        validationMsg = "OAuth attach error: ${t.message}"
+                                    }
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) { Text("Send OAuth to Server") }
+
+                        if (oauthStatus == "attached") {
+                            Text("\u2713 OAuth token sent to server", style = MaterialTheme.typography.bodySmall)
+                            Text("\u2713 OAuth attached to tenant", style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                } else {
+                    Text("\u26A0 No OAuth token — Disk fallback disabled", style = MaterialTheme.typography.bodySmall)
+                }
+
                 if (validationMsg.isNotBlank()) {
-                    Text(validationMsg, color = MaterialTheme.colorScheme.error)
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(validationMsg, color = MaterialTheme.colorScheme.primary,
+                        style = MaterialTheme.typography.bodySmall)
                 }
-
-                Button(onClick = {
-                    if (saveSettings()) validationMsg = "Settings saved"
-                }, modifier = Modifier.fillMaxWidth()) {
-                    Text("Save Settings")
-                }
-
-                Text("Settings are auto-saved when you press action buttons.", style = MaterialTheme.typography.bodySmall)
             }
         }
     }
