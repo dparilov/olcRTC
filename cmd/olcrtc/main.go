@@ -436,6 +436,37 @@ func runWatchServer(ctx context.Context, cfg config) error {
 	log.Println("[WATCH-SRV]   Signature verification: ready")
 	log.Println("[WATCH-SRV] Self-check passed, entering active monitoring")
 
+	// Start IntentAPI alongside Disk watcher (Direct API support)
+	if cfg.apiPort > 0 {
+		intentAPI := server.NewIntentAPI(cfg.masterSecret, previousSecret)
+		mux := http.NewServeMux()
+		mux.HandleFunc("/api/health", func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprintf(w, "ok")
+		})
+		intentAPI.RegisterRoutes(mux)
+		intentAPI.SetAcceptedCallback(func(record *rendezvous.RoomRecord, keyHex string) {
+			intentAPI.UpdateState(record.RecordID, server.IntentStarting, "")
+			log.Printf("[WATCH-SRV] Intent received via API — publishing room %s to Disk", record.RoomID)
+			// Publish the intent's room to Disk so the watcher picks it up
+			if err := rendezvous.PublishRoom(cfg.oauthToken, record); err != nil {
+				intentAPI.UpdateState(record.RecordID, server.IntentFailed, err.Error())
+				log.Printf("[WATCH-SRV] Failed to publish intent room: %v", err)
+				return
+			}
+			intentAPI.UpdateState(record.RecordID, server.IntentReady, "")
+			log.Printf("[WATCH-SRV] Intent room published — watcher will pick it up")
+		})
+		srv := &http.Server{Addr: fmt.Sprintf("0.0.0.0:%d", cfg.apiPort), Handler: mux}
+		go func() {
+			log.Printf("[WATCH-SRV] IntentAPI listening on 0.0.0.0:%d", cfg.apiPort)
+			if err := srv.ListenAndServe(); err != http.ErrServerClosed {
+				log.Printf("[WATCH-SRV] IntentAPI error: %v", err)
+			}
+		}()
+		defer srv.Close()
+	}
+
 	var lastRoomID string
 	var lastRecordID string // replay dedup: reject re-seen record_id
 
