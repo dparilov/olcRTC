@@ -163,7 +163,19 @@ class TelemostTunnelController(private val appContext: Context) {
 
     fun getRoomUrl(): String = prefs.getString("room_url", "") ?: ""
 
-    fun getServerEndpoint(): String = prefs.getString("server_endpoint", "") ?: ""
+    fun getServerEndpoint(): String {
+        var ep = prefs.getString("server_endpoint", "") ?: ""
+        ep = ep.trim()
+        if (ep.isNotBlank() && !ep.startsWith("http://") && !ep.startsWith("https://")) {
+            ep = "http://$ep"
+        }
+        // Add default port if none specified (check after ://)
+        val hostPart = ep.substringAfter("://", "")
+        if (ep.isNotBlank() && hostPart.isNotBlank() && ':' !in hostPart) {
+            ep = "$ep:8080"
+        }
+        return ep
+    }
     fun setServerEndpoint(endpoint: String) {
         prefs.edit().putString("server_endpoint", endpoint).apply()
     }
