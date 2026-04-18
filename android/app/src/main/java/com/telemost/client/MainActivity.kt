@@ -169,6 +169,10 @@ private fun MainScreen(controller: TelemostTunnelController, onLogin: () -> Unit
                 Text("Status: $status")
                 Text("Room: $meeting")
                 Text("SOCKS Port: ${controller.getSocksPort()}")
+                val tenantId = controller.getTenantId()
+                if (tenantId.isNotBlank()) {
+                    Text("Tenant: $tenantId", style = MaterialTheme.typography.bodySmall)
+                }
 
                 // Status indicators
                 Text(

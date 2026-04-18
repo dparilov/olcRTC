@@ -181,6 +181,62 @@ class TelemostTunnelController(private val appContext: Context) {
     }
 
     /**
+     * Register tenant with bootstrap server.
+     * Sends secret to POST /tenant/register, receives tenant_id + socks_port.
+     * Idempotent: same secret = same tenant.
+     */
+    private fun registerTenant(endpoint: String, secret: String): Boolean {
+        try {
+            val url = java.net.URL("$endpoint/tenant/register")
+            val conn = url.openConnection() as java.net.HttpURLConnection
+            conn.requestMethod = "POST"
+            conn.setRequestProperty("Content-Type", "application/json")
+            conn.connectTimeout = 15_000
+            conn.readTimeout = 15_000
+            conn.doOutput = true
+            val body = org.json.JSONObject().put("secret", secret).toString()
+            conn.outputStream.use { it.write(body.toByteArray()) }
+
+            val code = conn.responseCode
+            val resp = try {
+                conn.inputStream.bufferedReader().readText()
+            } catch (_: Exception) {
+                conn.errorStream?.bufferedReader()?.readText() ?: ""
+            }
+
+            if (code in 200..299) {
+                val json = org.json.JSONObject(resp)
+                val tenantId = json.optString("tenant_id", "")
+                val socksPort = json.optInt("socks_port", 0)
+                val apiPort = json.optInt("api_port", 0)
+                val diskPath = json.optString("disk_path", "")
+                val fallback = json.optBoolean("fallback_enabled", false)
+
+                if (socksPort > 0) setSocksPort(socksPort)
+                prefs.edit()
+                    .putString("tenant_id", tenantId)
+                    .putInt("tenant_api_port", apiPort)
+                    .putString("tenant_disk_path", diskPath)
+                    .putBoolean("tenant_fallback", fallback)
+                    .apply()
+
+                appendLog("[TENANT] Registered: id=$tenantId port=$socksPort fallback=$fallback")
+                return true
+            } else {
+                val json = try { org.json.JSONObject(resp) } catch (_: Exception) { null }
+                val msg = json?.optString("message", resp) ?: resp
+                appendLog("[TENANT] Registration failed: $code $msg")
+                return false
+            }
+        } catch (t: Throwable) {
+            appendLog("[TENANT] Registration error: ${t.message}")
+            return false
+        }
+    }
+
+    fun getTenantId(): String = prefs.getString("tenant_id", "") ?: ""
+
+    /**
      * Send signed room intent to server via direct API.
      * Returns record_id on success, null on failure.
      */
@@ -292,6 +348,12 @@ class TelemostTunnelController(private val appContext: Context) {
                 var intentDelivered = false
 
                 if (endpoint.isNotBlank()) {
+                    // Auto-register tenant if not yet registered
+                    if (getTenantId().isBlank()) {
+                        appendLog("Registering tenant...")
+                        _status.value = "Registering tenant..."
+                        registerTenant(endpoint, secret)
+                    }
                     appendLog("Sending room intent to $endpoint...")
                     _status.value = "Sending intent to server..."
                     val recordId = sendRoomIntent(endpoint, intentJson)
