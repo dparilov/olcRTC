@@ -22,12 +22,15 @@ import (
 
 func main() {
 	var (
-		bootstrapPort int
-		portStart     int
-		portEnd       int
-		stateDir      string
-		binary        string
-		dnsServer     string
+		bootstrapPort   int
+		portStart       int
+		portEnd         int
+		stateDir        string
+		binary          string
+		dnsServer       string
+		encryptKey      string
+		oauthClientID   string
+		oauthClientSec  string
 	)
 
 	flag.IntVar(&bootstrapPort, "port", 8080, "Bootstrap API listen port")
@@ -36,16 +39,42 @@ func main() {
 	flag.StringVar(&stateDir, "state-dir", "/opt/olcrtc/state", "Directory for tenant state persistence")
 	flag.StringVar(&binary, "binary", "/opt/olcrtc", "Path to olcrtc runtime binary")
 	flag.StringVar(&dnsServer, "dns", "1.1.1.1:53", "DNS server for tenant processes")
+	flag.StringVar(&encryptKey, "encrypt-key", "", "Passphrase for at-rest encryption of tenant secrets")
+	flag.StringVar(&oauthClientID, "oauth-client-id", "", "Yandex OAuth app client ID")
+	flag.StringVar(&oauthClientSec, "oauth-client-secret", "", "Yandex OAuth app client secret")
 	flag.Parse()
+
+	// Allow env vars as fallback for sensitive params
+	if v := os.Getenv("OLCRTC_ENCRYPT_KEY"); v != "" && encryptKey == "" {
+		encryptKey = v
+	}
+	if v := os.Getenv("OLCRTC_OAUTH_CLIENT_ID"); v != "" && oauthClientID == "" {
+		oauthClientID = v
+	}
+	if v := os.Getenv("OLCRTC_OAUTH_CLIENT_SECRET"); v != "" && oauthClientSec == "" {
+		oauthClientSec = v
+	}
 
 	log.SetFlags(log.Ltime | log.Lshortfile)
 	log.Println("[BOOTSTRAP] Starting multi-tenant bootstrap server...")
 	log.Printf("[BOOTSTRAP] Port range: %d-%d", portStart, portEnd)
 	log.Printf("[BOOTSTRAP] State dir: %s", stateDir)
 	log.Printf("[BOOTSTRAP] Runtime binary: %s", binary)
+	if encryptKey != "" {
+		log.Println("[BOOTSTRAP] At-rest encryption: ENABLED")
+	} else {
+		log.Println("[BOOTSTRAP] At-rest encryption: DISABLED (secrets memory-only)")
+	}
+	if oauthClientID != "" {
+		log.Println("[BOOTSTRAP] OAuth automation: ENABLED")
+	} else {
+		log.Println("[BOOTSTRAP] OAuth automation: DISABLED (manual token only)")
+	}
 
-	// Create tenant registry with port range
-	registry := server.NewTenantRegistry(portStart, portEnd, stateDir)
+	// Create tenant registry with port range and encryption key
+	registry := server.NewTenantRegistry(portStart, portEnd, stateDir, encryptKey)
+	registry.OAuthClientID = oauthClientID
+	registry.OAuthClientSecret = oauthClientSec
 
 	// Create process supervisor
 	supervisor := server.NewSupervisor(registry, binary, dnsServer)
@@ -61,7 +90,6 @@ func main() {
 	})
 
 	// Shared frontdoor: POST /api/room-intent routes to correct tenant by signature
-	// Client always sends room-intent to bootstrap endpoint (Model B)
 	mux.HandleFunc("/api/room-intent", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			w.Header().Set("Content-Type", "application/json")
@@ -70,7 +98,6 @@ func main() {
 			return
 		}
 
-		// Read and parse the body to extract the signed record
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
 			w.Header().Set("Content-Type", "application/json")
@@ -87,7 +114,6 @@ func main() {
 			return
 		}
 
-		// Route to correct tenant by verifying signature against each tenant's secret
 		tenant := registry.FindBySignature(func(secret string) error {
 			return rendezvous.VerifyRecord(&record, secret)
 		})
@@ -106,7 +132,6 @@ func main() {
 			return
 		}
 
-		// Forward to the matched tenant runtime
 		targetURL := fmt.Sprintf("http://127.0.0.1:%d/api/room-intent", tenant.APIPort)
 		log.Printf("[BOOTSTRAP] room-intent: routing to tenant %s (port %d)", tenant.TenantID, tenant.APIPort)
 		resp, err := http.Post(targetURL, "application/json", bytes.NewReader(body))
@@ -125,7 +150,6 @@ func main() {
 	})
 
 	// GET /api/room-intent/{record_id} — status polling proxy
-	// Iterates tenants until one owns the record (404 = try next)
 	mux.HandleFunc("/api/room-intent/", func(w http.ResponseWriter, r *http.Request) {
 		tenants := registry.AllTenants()
 		for _, t := range tenants {
@@ -159,12 +183,19 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Auto-start tenant runtime on registration (MT item 1, Option A)
-	// Must be after ctx creation since supervisor.StartTenant needs ctx
+	// Auto-start tenant runtime on registration
 	registry.OnRegistered = func(tenant *server.Tenant) {
 		log.Printf("[BOOTSTRAP] Auto-starting tenant %s (port %d)", tenant.TenantID, tenant.SOCKSPort)
 		if err := supervisor.StartTenant(ctx, tenant); err != nil {
 			log.Printf("[BOOTSTRAP] Failed to start tenant %s: %v", tenant.TenantID, err)
+		}
+	}
+
+	// Restart tenant runtime when OAuth token is attached
+	registry.OnOAuthAttached = func(tenant *server.Tenant) {
+		log.Printf("[BOOTSTRAP] Restarting tenant %s with OAuth token", tenant.TenantID)
+		if err := supervisor.RestartTenant(ctx, tenant); err != nil {
+			log.Printf("[BOOTSTRAP] Failed to restart tenant %s: %v", tenant.TenantID, err)
 		}
 	}
 
@@ -186,7 +217,7 @@ func main() {
 				log.Printf("[BOOTSTRAP] Failed to auto-start %s: %v", tenant.TenantID, err)
 			}
 		} else {
-			log.Printf("[BOOTSTRAP] Tenant %s needs re-registration (secret in memory only)", tenant.TenantID)
+			log.Printf("[BOOTSTRAP] Tenant %s needs re-registration (secret not recovered)", tenant.TenantID)
 		}
 	}
 
