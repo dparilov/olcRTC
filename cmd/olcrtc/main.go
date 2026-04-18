@@ -457,15 +457,18 @@ func runWatchServer(ctx context.Context, cfg config) error {
 		intentAPI.RegisterRoutes(mux)
 		intentAPI.SetAcceptedCallback(func(record *rendezvous.RoomRecord, keyHex string) {
 			intentAPI.UpdateState(record.RecordID, server.IntentStarting, "")
-			log.Printf("[WATCH-SRV] Intent received via API — publishing room %s to Disk", record.RoomID)
-			// Publish the intent's room to Disk so the watcher picks it up
-			if err := rendezvous.PublishRoom(cfg.oauthToken, record); err != nil {
-				intentAPI.UpdateState(record.RecordID, server.IntentFailed, err.Error())
-				log.Printf("[WATCH-SRV] Failed to publish intent room: %v", err)
-				return
+			log.Printf("[WATCH-SRV] Intent received via API — room %s", record.RoomID)
+			// Optional: publish to Disk (non-fatal if fails)
+			if cfg.oauthToken != "" {
+				if err := rendezvous.PublishRoom(cfg.oauthToken, record); err != nil {
+					log.Printf("[WATCH-SRV] Disk publish failed (non-fatal): %v", err)
+				} else {
+					log.Printf("[WATCH-SRV] Room also published to Disk")
+				}
 			}
+			// Mark intent ready — roomMgr will pick it up via MarkIntentReady
 			intentAPI.UpdateState(record.RecordID, server.IntentReady, "")
-			log.Printf("[WATCH-SRV] Intent room published — watcher will pick it up")
+			log.Printf("[WATCH-SRV] Intent marked ready for room %s", record.RoomID)
 		})
 		srv := &http.Server{Addr: fmt.Sprintf("0.0.0.0:%d", cfg.apiPort), Handler: mux}
 		go func() {
