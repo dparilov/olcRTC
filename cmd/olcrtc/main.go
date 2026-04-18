@@ -469,7 +469,17 @@ func runWatchServer(ctx context.Context, cfg config) error {
 			}
 			// Directly switch to the room — primary action
 			roomURL := "https://telemost.yandex.ru/j/" + record.RoomID
-			roomMgrRef.TriggerNewRoom(roomURL, keyHex)
+			if roomMgrRef != nil {
+				roomMgrRef.TriggerNewRoom(roomURL, keyHex)
+			} else {
+				log.Printf("[WATCH-SRV] roomMgrRef nil - waiting 2s for init")
+				time.Sleep(2 * time.Second)
+				if roomMgrRef != nil {
+					roomMgrRef.TriggerNewRoom(roomURL, keyHex)
+				} else {
+					log.Printf("[WATCH-SRV] roomMgrRef still nil - marking ready only")
+				}
+			}
 			log.Printf("[WATCH-SRV] Room switch initiated for %s", record.RoomID)
 		})
 		srv := &http.Server{Addr: fmt.Sprintf("0.0.0.0:%d", cfg.apiPort), Handler: mux}
