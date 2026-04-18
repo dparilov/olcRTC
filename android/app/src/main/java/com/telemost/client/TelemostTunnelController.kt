@@ -71,11 +71,13 @@ class TelemostTunnelController(private val appContext: Context) {
     private val _meeting = MutableStateFlow("No meeting link parsed yet")
     private val _diagnostics = MutableStateFlow("Diagnostics have not run yet")
     private val _logs = MutableStateFlow("")
+    private val _tenantId = MutableStateFlow("")
 
     val status: StateFlow<String> = _status.asStateFlow()
     val meeting: StateFlow<String> = _meeting.asStateFlow()
     val diagnostics: StateFlow<String> = _diagnostics.asStateFlow()
     val logs: StateFlow<String> = _logs.asStateFlow()
+    val tenantIdFlow: StateFlow<String> = _tenantId.asStateFlow()
 
     init {
         // Reset transient state on each app start (only secrets+cookies persist)
@@ -84,6 +86,7 @@ class TelemostTunnelController(private val appContext: Context) {
         Mobile.setDebug(true)
         Mobile.setLogWriter(LogWriter { line -> appendLog(line) })
         _status.value = if (Mobile.isRunning()) "Running" else "Idle"
+        _tenantId.value = prefs.getString("tenant_id", "") ?: ""
         val versionName = try {
             appContext.packageManager.getPackageInfo(appContext.packageName, 0).versionName
         } catch (_: Exception) { "?" }
@@ -215,6 +218,7 @@ class TelemostTunnelController(private val appContext: Context) {
                 if (socksPort > 0) setSocksPort(socksPort)
                 prefs.edit()
                     .putString("tenant_id", tenantId)
+                _tenantId.value = tenantId
                     .putInt("tenant_api_port", apiPort)
                     .putString("tenant_disk_path", diskPath)
                     .putBoolean("tenant_fallback", fallback)

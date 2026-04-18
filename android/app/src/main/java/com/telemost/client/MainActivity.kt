@@ -134,6 +134,7 @@ private fun MainScreen(controller: TelemostTunnelController, onLogin: () -> Unit
     val meeting by controller.meeting.collectAsState()
     val diagnostics by controller.diagnostics.collectAsState()
     val logs by controller.logs.collectAsState()
+    val currentTenantId by controller.tenantIdFlow.collectAsState()
     var selectedTab by remember { mutableIntStateOf(0) }
     var advancedMode by remember { mutableStateOf(false) }
     var versionTapCount by remember { mutableIntStateOf(0) }
@@ -193,7 +194,7 @@ private fun MainScreen(controller: TelemostTunnelController, onLogin: () -> Unit
                 Text("Status: $status")
                 Text("Room: $meeting")
                 Text("SOCKS Port: ${controller.getSocksPort()}")
-                val tenantId = controller.getTenantId()
+                val tenantId = currentTenantId
                 if (tenantId.isNotBlank()) {
                     Text("Tenant: $tenantId", style = MaterialTheme.typography.bodySmall)
                 }
@@ -344,7 +345,7 @@ private fun MainScreen(controller: TelemostTunnelController, onLogin: () -> Unit
                 )
 
                 // Tenant status
-                val currentTenantId = controller.getTenantId()
+                // currentTenantId is reactive via tenantIdFlow
                 if (currentTenantId.isNotBlank()) {
                     Text("\u2713 Tenant: $currentTenantId", style = MaterialTheme.typography.bodySmall)
                     Text("  SOCKS Port: ${controller.getSocksPort()}", style = MaterialTheme.typography.bodySmall)
