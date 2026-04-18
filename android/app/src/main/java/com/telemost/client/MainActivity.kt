@@ -29,7 +29,9 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -326,7 +328,7 @@ private fun MainScreen(controller: TelemostTunnelController, onLogin: () -> Unit
                         controller.setMasterSecret(masterSecret)
                         controller.setServerEndpoint(serverEndpoint)
                         val ep = controller.getServerEndpoint()
-                        coroutineScope.launch {
+                        coroutineScope.launch(Dispatchers.IO) {
                             validationMsg = "Registering tenant..."
                             try {
                                 val url = java.net.URL("$ep/tenant/register")
@@ -400,7 +402,7 @@ private fun MainScreen(controller: TelemostTunnelController, onLogin: () -> Unit
                             onClick = {
                                 controller.setOAuthToken(oauthToken)
                                 val ep = controller.getServerEndpoint()
-                                coroutineScope.launch {
+                                coroutineScope.launch(Dispatchers.IO) {
                                     try {
                                         val url = java.net.URL("$ep/tenant/oauth")
                                         val conn = url.openConnection() as java.net.HttpURLConnection
