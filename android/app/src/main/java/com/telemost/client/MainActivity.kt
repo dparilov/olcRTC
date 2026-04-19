@@ -182,7 +182,7 @@ private fun MainScreen(controller: TelemostTunnelController, onLogin: () -> Unit
     }
 
     fun saveSettings(): Boolean {
-        if (masterSecret.isBlank()) { validationMsg = "Master secret is required"; return false }
+        // v2: secret comes from server, not from UI field
         if (masterSecret.length < 8) { validationMsg = "Min 8 characters"; return false }
         controller.setOAuthToken(oauthToken)
         controller.setMasterSecret(masterSecret)

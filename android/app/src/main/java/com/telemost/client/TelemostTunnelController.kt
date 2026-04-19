@@ -281,9 +281,13 @@ class TelemostTunnelController(private val appContext: Context) {
                 val secret = json.optString("secret", "")
                 val sp = json.optInt("socks_port", 0)
                 val yandexUser = json.optString("yandex_user", "")
+                appendLog("[V2-DEBUG] Response: tid=$tid secret=${secret.take(8)}...(len=${secret.length}) port=$sp user=$yandexUser")
                 if (tid.isNotBlank()) updateTenantId(tid)
                 if (secret.isNotBlank()) {
                     setMasterSecret(secret)
+                    appendLog("[V2-DEBUG] setMasterSecret OK, verify=${getMasterSecret().take(8)}...")
+                } else {
+                    appendLog("[V2-DEBUG] WARNING: server returned EMPTY secret!")
                 }
                 if (sp > 0) setSocksPort(sp)
                 appendLog("[V2] Registered: user=$yandexUser tenant=$tid port=$sp")
