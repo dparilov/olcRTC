@@ -419,3 +419,14 @@ This v2 direction should be understood as:
 - session-centric cleanup of runtime resources
 
 This allows the new architecture to be developed safely in parallel without destabilizing the current working system.
+
+---
+
+# 19. Resolved questions
+
+1. **OAuth client_id** — same as v1 (`466e5098b9254404a57bb50af62a5160`). No change needed.
+2. **Telemost room lifecycle** — unchanged from v1. Same room creation/join flow.
+3. **Port pool size** — 100 concurrent sessions. Pool range: ports 2080-2179 (SOCKS) + 3080-3179 (API).
+4. **Watcher mechanism** — same polling approach as v1. No webhook API available.
+5. **Monitoring** — deferred. Not in v2 Phase 1.
+6. **Rate limiting** — enabled. Per-tenant session creation: max 1 session/minute. Exceeding returns 429 with `Retry-After` header. User-facing: "Please wait before creating a new session." Reasonable wait is acceptable UX trade-off.
