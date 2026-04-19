@@ -501,9 +501,59 @@ class TelemostTunnelController(private val appContext: Context) {
                             prefs.edit().putString("v2_session_id", sid).apply()
                             appendLog("[V2] Session: id=$sid port=$sp")
                         } else {
-                            appendLog("[V2] Session create failed: $sCode — aborting launch")
-                            _status.value = "Session create failed"
-                            return@launch
+                            if (sCode == 404) {
+                                // Tenant not found on server — auto re-register
+                                appendLog("[V2] Tenant not found (404), re-registering...")
+                                val oauthToken = getOAuthToken()
+                                if (oauthToken.isNotBlank()) {
+                                    registerV2(sessionEndpoint, oauthToken) { regOk, regMsg ->
+                                        appendLog("[V2] Re-register: $regOk $regMsg")
+                                    }
+                                    // Retry session create after re-register
+                                    try {
+                                        val retryTid = getTenantId()
+                                        val retrySecret = getMasterSecret()
+                                        val retryUrl = java.net.URL("$sessionEndpoint/v2/session/create")
+                                        val retryConn = retryUrl.openConnection() as java.net.HttpURLConnection
+                                        retryConn.requestMethod = "POST"
+                                        retryConn.setRequestProperty("Content-Type", "application/json")
+                                        retryConn.connectTimeout = 15000
+                                        retryConn.readTimeout = 15000
+                                        retryConn.doOutput = true
+                                        val retryBody = org.json.JSONObject()
+                                            .put("tenant_id", retryTid)
+                                            .put("secret", retrySecret)
+                                            .put("device_id", sessionDeviceId)
+                                            .toString()
+                                        retryConn.outputStream.use { it.write(retryBody.toByteArray()) }
+                                        val retryCode = retryConn.responseCode
+                                        if (retryCode in 200..299) {
+                                            val retryJson = org.json.JSONObject(retryConn.inputStream.bufferedReader().readText())
+                                            val retrySid = retryJson.optString("session_id", "")
+                                            val retrySp = retryJson.optInt("socks_port", 0)
+                                            if (retrySp > 0) setSocksPort(retrySp)
+                                            prefs.edit().putString("v2_session_id", retrySid).apply()
+                                            appendLog("[V2] Session retry OK: id=$retrySid port=$retrySp")
+                                        } else {
+                                            appendLog("[V2] Session retry failed: $retryCode — aborting")
+                                            _status.value = "Session failed after re-register"
+                                            return@launch
+                                        }
+                                    } catch (rt: Throwable) {
+                                        appendLog("[V2] Session retry error: ${rt.message}")
+                                        _status.value = "Session retry error"
+                                        return@launch
+                                    }
+                                } else {
+                                    appendLog("[V2] No OAuth token for re-register — Login required")
+                                    _status.value = "Login required"
+                                    return@launch
+                                }
+                            } else {
+                                appendLog("[V2] Session create failed: $sCode — aborting launch")
+                                _status.value = "Session create failed"
+                                return@launch
+                            }
                         }
                     } catch (t: Throwable) {
                         appendLog("[V2] Session error: ${t.message} — aborting launch")
