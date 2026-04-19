@@ -191,13 +191,9 @@ func main() {
 	// Start session cleanup loop (30min idle TTL)
 	sessionMgr.StartCleanupLoop(ctx)
 
-	// Auto-start tenant runtime on registration
-	registry.OnRegistered = func(tenant *server.Tenant) {
-		log.Printf("[BOOTSTRAP] Auto-starting tenant %s (port %d)", tenant.TenantID, tenant.SOCKSPort)
-		if err := supervisor.StartTenant(ctx, tenant); err != nil {
-			log.Printf("[BOOTSTRAP] Failed to start tenant %s: %v", tenant.TenantID, err)
-		}
-	}
+	// v2: session manager handles runtime start, NOT OnRegistered
+	// OnRegistered disabled — CreateSession starts the runtime
+	registry.OnRegistered = nil
 
 	// Restart tenant runtime when OAuth token is attached
 	registry.OnOAuthAttached = func(tenant *server.Tenant) {
