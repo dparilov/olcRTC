@@ -1153,4 +1153,24 @@ class TelemostTunnelController(private val appContext: Context) {
             }
         }
     }
+
+    // --- VPN App Routing ---
+    
+    private val defaultVpnApps = setOf(
+        "com.android.chrome", "com.chrome.beta", "org.mozilla.firefox",
+        "com.brave.browser", "com.opera.browser", "com.yandex.browser",
+        "com.android.vending", "com.google.android.youtube"
+    )
+    
+    fun getVpnApps(): Set<String> {
+        val saved = prefs.getStringSet("vpn_apps", null)
+        return saved ?: defaultVpnApps
+    }
+    
+    fun setVpnApp(pkg: String, enabled: Boolean) {
+        val current = getVpnApps().toMutableSet()
+        if (enabled) current.add(pkg) else current.remove(pkg)
+        prefs.edit().putStringSet("vpn_apps", current).apply()
+    }
+
 }

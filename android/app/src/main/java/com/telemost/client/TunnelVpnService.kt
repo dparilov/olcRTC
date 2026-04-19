@@ -99,16 +99,14 @@ class TunnelVpnService : VpnService() {
         // Route only specific apps through VPN (allowlist mode)
         // Using addAllowedApplication instead of addDisallowedApplication
         // to avoid triggering network change events that kill our WebRTC tunnel
-        val vpnApps = listOf(
-            "com.android.chrome",           // Chrome
-            "com.chrome.beta",              // Chrome Beta
-            "org.mozilla.firefox",          // Firefox
-            "com.brave.browser",            // Brave
-            "com.opera.browser",            // Opera
-            "com.yandex.browser",           // Yandex Browser
-            "com.android.vending",          // Play Store
-            "com.google.android.youtube",   // YouTube
+        // Read allowed apps from prefs (user-configurable in Apps tab)
+        val defaultApps = setOf(
+            "com.android.chrome", "com.chrome.beta", "org.mozilla.firefox",
+            "com.brave.browser", "com.opera.browser", "com.yandex.browser",
+            "com.android.vending", "com.google.android.youtube"
         )
+        val prefs = getSharedPreferences("olcrtc", MODE_PRIVATE)
+        val vpnApps = prefs.getStringSet("vpn_apps", defaultApps) ?: defaultApps
         var addedCount = 0
         for (app in vpnApps) {
             try {

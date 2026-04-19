@@ -454,6 +454,63 @@ private fun MainScreen(controller: TelemostTunnelController, onLogin: () -> Unit
                         style = MaterialTheme.typography.bodySmall)
                 }
             }
+
+            // === TAB 3: APPS ===
+            2 -> Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(16.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Text("VPN Apps", style = MaterialTheme.typography.headlineSmall)
+                Text("Select which apps route through VPN", style = MaterialTheme.typography.bodySmall)
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                val defaultApps = listOf(
+                    "com.android.chrome" to "Chrome",
+                    "com.chrome.beta" to "Chrome Beta",
+                    "org.mozilla.firefox" to "Firefox",
+                    "com.brave.browser" to "Brave",
+                    "com.opera.browser" to "Opera",
+                    "com.yandex.browser" to "Yandex Browser",
+                    "com.android.vending" to "Play Store",
+                    "com.google.android.youtube" to "YouTube",
+                    "org.telegram.messenger" to "Telegram",
+                    "com.whatsapp" to "WhatsApp",
+                    "com.google.android.gm" to "Gmail",
+                    "com.instagram.android" to "Instagram",
+                    "com.twitter.android" to "X (Twitter)",
+                    "com.spotify.music" to "Spotify",
+                    "com.google.android.apps.maps" to "Google Maps",
+                )
+
+                val vpnAppsPrefs = controller.getVpnApps()
+
+                defaultApps.forEach { (pkg, name) ->
+                    val isInstalled = try {
+                        context.packageManager.getPackageInfo(pkg, 0)
+                        true
+                    } catch (_: Exception) { false }
+
+                    if (isInstalled) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+                        ) {
+                            Text(name, style = MaterialTheme.typography.bodyMedium)
+                            Switch(
+                                checked = vpnAppsPrefs.contains(pkg),
+                                onCheckedChange = { enabled ->
+                                    controller.setVpnApp(pkg, enabled)
+                                }
+                            )
+                        }
+                    }
+                }
+            }
         }
     }
 }
