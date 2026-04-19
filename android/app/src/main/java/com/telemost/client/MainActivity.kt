@@ -367,43 +367,8 @@ private fun MainScreen(controller: TelemostTunnelController, onLogin: () -> Unit
                 val tenantButtonEnabled = serverEndpoint.isNotBlank()
                 Button(
                     onClick = {
-                        controller.setMasterSecret(masterSecret)
                         controller.setServerEndpoint(serverEndpoint)
-                        val ep = controller.getServerEndpoint()
-                        coroutineScope.launch(Dispatchers.IO) {
-                            validationMsg = "Registering tenant..."
-                            try {
-                                val url = java.net.URL("$ep/tenant/register")
-                                val conn = url.openConnection() as java.net.HttpURLConnection
-                                conn.requestMethod = "POST"
-                                conn.setRequestProperty("Content-Type", "application/json")
-                                conn.connectTimeout = 15000
-                                conn.readTimeout = 15000
-                                conn.doOutput = true
-                                val body = org.json.JSONObject().put("secret", masterSecret).toString()
-                                conn.outputStream.use { it.write(body.toByteArray()) }
-                                val code = conn.responseCode
-                                val resp = try { conn.inputStream.bufferedReader().readText() } catch (_: Exception) {
-                                    conn.errorStream?.bufferedReader()?.readText() ?: ""
-                                }
-                                if (code in 200..299) {
-                                    val json = org.json.JSONObject(resp)
-                                    val tid = json.optString("tenant_id", "")
-                                    val sp = json.optInt("socks_port", 0)
-                                    if (sp > 0) controller.setSocksPort(sp)
-                                    controller.appendLog("[SETTINGS] Tenant registered: $tid port=$sp")
-                                    controller.updateTenantId(tid)
-                                    tenantStatus = "created"
-                                    validationMsg = "Tenant registered: $tid"
-                                } else {
-                                    val json = try { org.json.JSONObject(resp) } catch (_: Exception) { null }
-                                    validationMsg = "Registration failed: ${json?.optString("message", resp) ?: resp}"
-                                }
-                            } catch (t: Throwable) {
-                                validationMsg = "Error: ${t.message}"
-                                controller.appendLog("[SETTINGS] Tenant registration error: ${t.message}")
-                            }
-                        }
+                        onLogin()
                     },
                     enabled = tenantButtonEnabled,
                     modifier = Modifier.fillMaxWidth()
