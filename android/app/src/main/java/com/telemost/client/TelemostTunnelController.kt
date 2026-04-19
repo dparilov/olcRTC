@@ -293,6 +293,51 @@ class TelemostTunnelController(private val appContext: Context) {
             callback(false, "Error: ${t.message}")
         }
     }
+    fun createV2Session(endpoint: String, callback: (Boolean, String) -> Unit) {
+        val tenantId = getTenantId()
+        val secret = getMasterSecret()
+        val deviceId = getDeviceId()
+        if (tenantId.isBlank() || secret.isBlank()) {
+            callback(false, "No tenant registered")
+            return
+        }
+        try {
+            val url = java.net.URL("$endpoint/v2/session/create")
+            val conn = url.openConnection() as java.net.HttpURLConnection
+            conn.requestMethod = "POST"
+            conn.setRequestProperty("Content-Type", "application/json")
+            conn.connectTimeout = 15000
+            conn.readTimeout = 15000
+            conn.doOutput = true
+            val body = org.json.JSONObject()
+                .put("tenant_id", tenantId)
+                .put("secret", secret)
+                .put("device_id", deviceId)
+                .toString()
+            conn.outputStream.use { it.write(body.toByteArray()) }
+            val code = conn.responseCode
+            val resp = try { conn.inputStream.bufferedReader().readText() } catch (_: Exception) {
+                conn.errorStream?.bufferedReader()?.readText() ?: ""
+            }
+            if (code in 200..299) {
+                val json = org.json.JSONObject(resp)
+                val sessionId = json.optString("session_id", "")
+                val sp = json.optInt("socks_port", 0)
+                if (sp > 0) setSocksPort(sp)
+                prefs.edit().putString("v2_session_id", sessionId).apply()
+                appendLog("[V2] Session created: id=$sessionId port=$sp ttl=1800s")
+                callback(true, "Session ready (port $sp)")
+            } else {
+                val json = try { org.json.JSONObject(resp) } catch (_: Exception) { null }
+                val msg = json?.optString("message", resp) ?: resp
+                appendLog("[V2] Session create failed: $code $msg")
+                callback(false, "Session failed: $msg")
+            }
+        } catch (t: Throwable) {
+            appendLog("[V2] Session error: ${t.message}")
+            callback(false, "Session error: ${t.message}")
+        }
+    }
 
     fun updateTenantId(id: String) {
         _tenantId.value = id

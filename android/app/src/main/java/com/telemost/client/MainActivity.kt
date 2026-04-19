@@ -70,8 +70,17 @@ class MainActivity : ComponentActivity() {
                 Thread {
                     val ep = controller.getServerEndpoint()
                     controller.registerV2(ep, token) { success, msg ->
-                        runOnUiThread {
-                            Toast.makeText(this@MainActivity, msg, Toast.LENGTH_LONG).show()
+                        if (success) {
+                            // Auto-create session after successful registration
+                            controller.createV2Session(ep) { sessOk, sessMsg ->
+                                runOnUiThread {
+                                    Toast.makeText(this@MainActivity, if (sessOk) "$msg | $sessMsg" else msg, Toast.LENGTH_LONG).show()
+                                }
+                            }
+                        } else {
+                            runOnUiThread {
+                                Toast.makeText(this@MainActivity, msg, Toast.LENGTH_LONG).show()
+                            }
                         }
                     }
                 }.start()
