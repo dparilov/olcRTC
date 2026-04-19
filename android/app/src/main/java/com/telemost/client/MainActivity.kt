@@ -469,46 +469,41 @@ private fun MainScreen(controller: TelemostTunnelController, onLogin: () -> Unit
 
                 Spacer(modifier = Modifier.height(8.dp))
 
-                val defaultApps = listOf(
-                    "com.android.chrome" to "Chrome",
-                    "com.chrome.beta" to "Chrome Beta",
-                    "org.mozilla.firefox" to "Firefox",
-                    "com.brave.browser" to "Brave",
-                    "com.opera.browser" to "Opera",
-                    "com.yandex.browser" to "Yandex Browser",
-                    "com.android.vending" to "Play Store",
-                    "com.google.android.youtube" to "YouTube",
-                    "org.telegram.messenger" to "Telegram",
-                    "com.whatsapp" to "WhatsApp",
-                    "com.google.android.gm" to "Gmail",
-                    "com.instagram.android" to "Instagram",
-                    "com.twitter.android" to "X (Twitter)",
-                    "com.spotify.music" to "Spotify",
-                    "com.google.android.apps.maps" to "Google Maps",
-                )
-
                 val vpnAppsPrefs = controller.getVpnApps()
-
-                defaultApps.forEach { (pkg, name) ->
-                    val isInstalled = try {
-                        context.packageManager.getPackageInfo(pkg, 0)
-                        true
-                    } catch (_: Exception) { false }
-
-                    if (isInstalled) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
-                        ) {
-                            Text(name, style = MaterialTheme.typography.bodyMedium)
-                            Switch(
-                                checked = vpnAppsPrefs.contains(pkg),
-                                onCheckedChange = { enabled ->
-                                    controller.setVpnApp(pkg, enabled)
-                                }
-                            )
+                val pm = context.packageManager
+                val installedApps = remember {
+                    pm.getInstalledApplications(0)
+                        .filter { app ->
+                            // Show only user apps + system apps with launcher
+                            pm.getLaunchIntentForPackage(app.packageName) != null &&
+                            app.packageName != context.packageName // exclude ourselves
                         }
+                        .sortedWith(compareByDescending<android.content.pm.ApplicationInfo> {
+                            vpnAppsPrefs.contains(it.packageName)
+                        }.thenBy {
+                            pm.getApplicationLabel(it).toString().lowercase()
+                        })
+                }
+
+                Text("${installedApps.size} apps available", style = MaterialTheme.typography.bodySmall)
+                Spacer(modifier = Modifier.height(4.dp))
+
+                installedApps.forEach { app ->
+                    val pkg = app.packageName
+                    val name = pm.getApplicationLabel(app).toString()
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+                    ) {
+                        Text(name, style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.weight(1f))
+                        Switch(
+                            checked = vpnAppsPrefs.contains(pkg),
+                            onCheckedChange = { enabled ->
+                                controller.setVpnApp(pkg, enabled)
+                            }
+                        )
                     }
                 }
             }
