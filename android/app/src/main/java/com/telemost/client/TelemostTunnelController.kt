@@ -240,6 +240,60 @@ class TelemostTunnelController(private val appContext: Context) {
 
     fun getTenantId(): String = prefs.getString("tenant_id", "") ?: ""
 
+    fun getDeviceId(): String {
+        var id = prefs.getString("device_id", "") ?: ""
+        if (id.isBlank()) {
+            id = java.util.UUID.randomUUID().toString()
+            prefs.edit().putString("device_id", id).apply()
+            appendLog("[DEVICE] Generated device_id: $id")
+        }
+        return id
+    }
+
+    fun registerV2(endpoint: String, oauthToken: String, callback: (Boolean, String) -> Unit) {
+        val deviceId = getDeviceId()
+        try {
+            val url = java.net.URL("$endpoint/v2/register")
+            val conn = url.openConnection() as java.net.HttpURLConnection
+            conn.requestMethod = "POST"
+            conn.setRequestProperty("Content-Type", "application/json")
+            conn.connectTimeout = 15000
+            conn.readTimeout = 15000
+            conn.doOutput = true
+            val body = org.json.JSONObject()
+                .put("oauth_token", oauthToken)
+                .put("device_id", deviceId)
+                .toString()
+            conn.outputStream.use { it.write(body.toByteArray()) }
+            val code = conn.responseCode
+            val resp = try { conn.inputStream.bufferedReader().readText() } catch (_: Exception) {
+                conn.errorStream?.bufferedReader()?.readText() ?: ""
+            }
+            if (code in 200..299) {
+                val json = org.json.JSONObject(resp)
+                val tid = json.optString("tenant_id", "")
+                val secret = json.optString("secret", "")
+                val sp = json.optInt("socks_port", 0)
+                val yandexUser = json.optString("yandex_user", "")
+                if (tid.isNotBlank()) updateTenantId(tid)
+                if (secret.isNotBlank()) {
+                    setMasterSecret(secret)
+                }
+                if (sp > 0) setSocksPort(sp)
+                appendLog("[V2] Registered: user=$yandexUser tenant=$tid port=$sp")
+                callback(true, "Logged in as $yandexUser (tenant: $tid)")
+            } else {
+                val json = try { org.json.JSONObject(resp) } catch (_: Exception) { null }
+                val msg = json?.optString("message", resp) ?: resp
+                appendLog("[V2] Registration failed: $code $msg")
+                callback(false, "Registration failed: $msg")
+            }
+        } catch (t: Throwable) {
+            appendLog("[V2] Registration error: ${t.message}")
+            callback(false, "Error: ${t.message}")
+        }
+    }
+
     fun updateTenantId(id: String) {
         _tenantId.value = id
     }

@@ -44,7 +44,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 
-private const val APP_VERSION = "0.9.3"
+private const val APP_VERSION = "2.0.0-alpha"
 
 class MainActivity : ComponentActivity() {
     private val controller by lazy { TelemostTunnelController(applicationContext) }
@@ -65,8 +65,16 @@ class MainActivity : ComponentActivity() {
             val token = result.data?.getStringExtra(YandexLoginActivity.EXTRA_OAUTH_TOKEN) ?: ""
             if (token.isNotBlank()) {
                 controller.setOAuthToken(token)
-                controller.appendLog("[SSO] OAuth token received and saved")
-                controller.sendOAuthToServer()
+                controller.appendLog("[SSO] OAuth token received — registering v2...")
+                // V2: auto-register with Yandex token
+                Thread {
+                    val ep = controller.getServerEndpoint()
+                    controller.registerV2(ep, token) { success, msg ->
+                        runOnUiThread {
+                            Toast.makeText(this@MainActivity, msg, Toast.LENGTH_LONG).show()
+                        }
+                    }
+                }.start()
             }
             if (cookies.isNotBlank()) {
                 controller.setYandexCookies(cookies)
@@ -303,7 +311,7 @@ private fun MainScreen(controller: TelemostTunnelController, onLogin: () -> Unit
                         .clickable {
                             if (!advancedMode) {
                                 versionTapCount++
-                                if (versionTapCount >= 5) {
+                                if (versionTapCount >= 7) {
                                     advancedMode = true
                                     Toast.makeText(context, "Advanced mode enabled", Toast.LENGTH_SHORT).show()
                                 }
@@ -326,14 +334,18 @@ private fun MainScreen(controller: TelemostTunnelController, onLogin: () -> Unit
                 // --- Tenant Configuration ---
                 Text("Tenant Configuration", style = MaterialTheme.typography.titleSmall)
 
-                OutlinedTextField(
-                    value = masterSecret,
-                    onValueChange = { masterSecret = it; validationMsg = "" },
-                    label = { Text("Master Secret") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    visualTransformation = PasswordVisualTransformation()
-                )
+                // Master Secret hidden in v2 — only visible in maintenance mode
+                if (advancedMode) {
+                    OutlinedTextField(
+                        value = masterSecret,
+                        onValueChange = { masterSecret = it; validationMsg = "" },
+                        label = { Text("Master Secret (auto-generated)") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                        readOnly = true
+                    )
+                }
 
                 OutlinedTextField(
                     value = serverEndpoint,
@@ -399,7 +411,7 @@ private fun MainScreen(controller: TelemostTunnelController, onLogin: () -> Unit
                     },
                     enabled = tenantButtonEnabled,
                     modifier = Modifier.fillMaxWidth()
-                ) { Text("Create / Update Tenant") }
+                ) { Text("Login to Yandex / Create Tenant") }
 
                 // --- Yandex Account ---
                 Spacer(modifier = Modifier.height(8.dp))
