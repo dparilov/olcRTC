@@ -422,24 +422,24 @@ private fun MainScreen(controller: TelemostTunnelController, onLogin: () -> Unit
                     modifier = Modifier.fillMaxWidth()
                 ) { Text("Login to Yandex / Create Tenant") }
 
-                // --- Yandex Account ---
-                Spacer(modifier = Modifier.height(8.dp))
-                Text("Yandex Account", style = MaterialTheme.typography.titleSmall)
+                // --- Yandex Account (maintenance only) ---
+                if (advancedMode) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text("Yandex Account (maintenance)", style = MaterialTheme.typography.titleSmall)
 
-                Button(onClick = { onLogin() }, modifier = Modifier.fillMaxWidth()) {
-                    Text("Login to Yandex")
+                    Button(onClick = { onLogin() }, modifier = Modifier.fillMaxWidth()) {
+                        Text("Re-login to Yandex")
+                    }
+
+                    if (controller.hasYandexCookies()) {
+                        Text("\u2713 Yandex cookies received", style = MaterialTheme.typography.bodySmall)
+                    }
                 }
 
-                // Yandex status
-                if (controller.hasYandexCookies()) {
-                    Text("\u2713 Yandex cookies received for room creation", style = MaterialTheme.typography.bodySmall)
-                } else {
-                    Text("\u26A0 Login required for room creation", style = MaterialTheme.typography.bodySmall)
-                }
-
-                // --- OAuth / Fallback ---
+                // --- OAuth / Fallback (maintenance only) ---
+                if (advancedMode) {
                 Spacer(modifier = Modifier.height(8.dp))
-                Text("Fallback (Yandex Disk)", style = MaterialTheme.typography.titleSmall)
+                Text("Fallback (maintenance)", style = MaterialTheme.typography.titleSmall)
 
                 OutlinedTextField(
                     value = oauthToken,
@@ -497,6 +497,8 @@ private fun MainScreen(controller: TelemostTunnelController, onLogin: () -> Unit
                 } else {
                     Text("\u26A0 No OAuth token — Disk fallback disabled", style = MaterialTheme.typography.bodySmall)
                 }
+
+                } // end advancedMode OAuth section
 
                 if (validationMsg.isNotBlank()) {
                     Spacer(modifier = Modifier.height(4.dp))
