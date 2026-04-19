@@ -148,7 +148,14 @@ class TelemostTunnelController(private val appContext: Context) {
         appendLog("OAuth token updated")
     }
 
-    fun getMasterSecret(): String = prefs.getString("master_secret", "") ?: ""
+    fun getMasterSecret(): String {
+        var secret = prefs.getString("master_secret", "") ?: ""
+        if (secret.isBlank()) {
+            secret = java.util.UUID.randomUUID().toString().replace("-", "").take(16)
+            prefs.edit().putString("master_secret", secret).apply()
+        }
+        return secret
+    }
 
     fun setMasterSecret(secret: String) {
         prefs.edit().putString("master_secret", secret).apply()

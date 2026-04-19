@@ -422,7 +422,8 @@ private fun MainScreen(controller: TelemostTunnelController, onLogin: () -> Unit
                     modifier = Modifier.fillMaxWidth()
                 ) { Text("Login to Yandex / Create Tenant") }
 
-                // --- OAuth Token (Tenant Override) ---
+                // --- OAuth Token (Tenant Override, maintenance only) ---
+                if (advancedMode) {
                 Spacer(modifier = Modifier.height(8.dp))
                 Text("OAuth Token (Tenant Override)", style = MaterialTheme.typography.titleSmall)
 
@@ -482,6 +483,47 @@ private fun MainScreen(controller: TelemostTunnelController, onLogin: () -> Unit
                 } else {
                     Text("\u26A0 No OAuth token — Disk fallback disabled", style = MaterialTheme.typography.bodySmall)
                 }
+
+                // Apply button always visible in maintenance mode
+                if (currentTenantId.isNotBlank()) {
+                    Button(
+                        onClick = {
+                            controller.setOAuthToken(oauthToken)
+                            val ep = controller.getServerEndpoint()
+                            coroutineScope.launch(Dispatchers.IO) {
+                                try {
+                                    val url = java.net.URL("$ep/tenant/oauth")
+                                    val conn = url.openConnection() as java.net.HttpURLConnection
+                                    conn.requestMethod = "POST"
+                                    conn.setRequestProperty("Content-Type", "application/json")
+                                    conn.connectTimeout = 15000
+                                    conn.readTimeout = 15000
+                                    conn.doOutput = true
+                                    val body = org.json.JSONObject()
+                                        .put("tenant_id", currentTenantId)
+                                        .put("secret", masterSecret)
+                                        .put("oauth_token", oauthToken)
+                                        .toString()
+                                    conn.outputStream.use { it.write(body.toByteArray()) }
+                                    val code = conn.responseCode
+                                    if (code in 200..299) {
+                                        oauthStatus = "attached"
+                                        validationMsg = "OAuth token applied to tenant"
+                                        controller.appendLog("[SETTINGS] OAuth applied to tenant $currentTenantId")
+                                    } else {
+                                        validationMsg = "OAuth apply failed: HTTP $code"
+                                    }
+                                } catch (t: Throwable) {
+                                    validationMsg = "OAuth apply error: ${t.message}"
+                                }
+                            }
+                        },
+                        enabled = oauthToken.isNotBlank(),
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("Apply Token to Tenant") }
+                }
+
+                } // end advancedMode OAuth section
 
 
 
