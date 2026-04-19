@@ -465,46 +465,80 @@ private fun MainScreen(controller: TelemostTunnelController, onLogin: () -> Unit
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 Text("VPN Apps", style = MaterialTheme.typography.headlineSmall)
-                Text("Select which apps route through VPN", style = MaterialTheme.typography.bodySmall)
+                Text("Apps routing through VPN tunnel", style = MaterialTheme.typography.bodySmall)
 
                 Spacer(modifier = Modifier.height(8.dp))
 
-                val vpnAppsPrefs = controller.getVpnApps()
+                var vpnAppsState by remember { mutableStateOf(controller.getVpnApps()) }
+                var showAddDialog by remember { mutableStateOf(false) }
                 val pm = context.packageManager
-                val installedApps = remember {
-                    pm.getInstalledApplications(0)
-                        .filter { app ->
-                            // Show only user apps + system apps with launcher
-                            pm.getLaunchIntentForPackage(app.packageName) != null &&
-                            app.packageName != context.packageName // exclude ourselves
-                        }
-                        .sortedWith(compareByDescending<android.content.pm.ApplicationInfo> {
-                            vpnAppsPrefs.contains(it.packageName)
-                        }.thenBy {
-                            pm.getApplicationLabel(it).toString().lowercase()
-                        })
-                }
 
-                Text("${installedApps.size} apps available", style = MaterialTheme.typography.bodySmall)
-                Spacer(modifier = Modifier.height(4.dp))
+                // Show only apps in the allow list
+                vpnAppsState.sorted().forEach { pkg ->
+                    val appName = try {
+                        pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString()
+                    } catch (_: Exception) { pkg }
 
-                installedApps.forEach { app ->
-                    val pkg = app.packageName
-                    val name = pm.getApplicationLabel(app).toString()
                     Row(
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
                     ) {
-                        Text(name, style = MaterialTheme.typography.bodyMedium,
+                        Text(appName, style = MaterialTheme.typography.bodyMedium,
                             modifier = Modifier.weight(1f))
-                        Switch(
-                            checked = vpnAppsPrefs.contains(pkg),
-                            onCheckedChange = { enabled ->
-                                controller.setVpnApp(pkg, enabled)
+                        // Remove button
+                        Button(
+                            onClick = {
+                                controller.setVpnApp(pkg, false)
+                                vpnAppsState = controller.getVpnApps()
                             }
-                        )
+                        ) { Text("X") }
                     }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Add app button
+                Button(
+                    onClick = { showAddDialog = true },
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("+ Add App") }
+
+                // Add app dialog — show installed apps not yet in list
+                if (showAddDialog) {
+                    val allApps = remember {
+                        pm.getInstalledApplications(0)
+                            .filter { app ->
+                                pm.getLaunchIntentForPackage(app.packageName) != null &&
+                                app.packageName != context.packageName
+                            }
+                            .sortedBy { pm.getApplicationLabel(it).toString().lowercase() }
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text("Select app to add:", style = MaterialTheme.typography.titleSmall)
+
+                    allApps.filter { it.packageName !in vpnAppsState }.take(50).forEach { app ->
+                        val pkg = app.packageName
+                        val name = pm.getApplicationLabel(app).toString()
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)
+                                .clickable {
+                                    controller.setVpnApp(pkg, true)
+                                    vpnAppsState = controller.getVpnApps()
+                                    showAddDialog = false
+                                },
+                            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+                        ) {
+                            Text("+ $name", style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.primary)
+                        }
+                    }
+
+                    Button(
+                        onClick = { showAddDialog = false },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("Cancel") }
                 }
             }
         }
