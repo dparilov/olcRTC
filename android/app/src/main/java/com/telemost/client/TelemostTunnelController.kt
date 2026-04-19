@@ -466,11 +466,8 @@ class TelemostTunnelController(private val appContext: Context) {
                 var intentDelivered = false
 
                 if (endpoint.isNotBlank()) {
-                    // Auto-register tenant if not yet registered
-                    // Always re-register tenant (idempotent — same secret = same tenant)
-                    appendLog("Registering tenant...")
-                    _status.value = "Registering tenant..."
-                    registerTenant(endpoint, secret)
+                    // v2: tenant already registered from Login flow, skip v1 re-registration
+                    appendLog("[V2] Using existing tenant registration")
                     appendLog("Sending room intent to $endpoint...")
                     _status.value = "Sending intent to server..."
                     val recordId = sendRoomIntent(endpoint, intentJson)
