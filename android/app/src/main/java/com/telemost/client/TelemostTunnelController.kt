@@ -767,22 +767,21 @@ class TelemostTunnelController(private val appContext: Context) {
             appendLog("[STOP] Mobile.stop error: ${t.message}")
         }
         
-        // 3. Terminate server-side session
+        // 3. Terminate server-side session (synchronous — wait for result)
+        _status.value = "Stopping..."
         val endpoint = getServerEndpoint()
         val sessionId = prefs.getString("v2_session_id", "") ?: ""
         if (sessionId.isNotBlank() && endpoint.isNotBlank()) {
-            scope.launch {
-                try {
-                    val url = java.net.URL("$endpoint/v2/session/$sessionId")
-                    val conn = url.openConnection() as java.net.HttpURLConnection
-                    conn.requestMethod = "DELETE"
-                    conn.connectTimeout = 5000
-                    conn.readTimeout = 5000
-                    val code = conn.responseCode
-                    appendLog("[STOP] Server session $sessionId terminated: HTTP $code")
-                } catch (t: Throwable) {
-                    appendLog("[STOP] Server session cleanup failed: ${t.message}")
-                }
+            try {
+                val url = java.net.URL("$endpoint/v2/session/$sessionId")
+                val conn = url.openConnection() as java.net.HttpURLConnection
+                conn.requestMethod = "DELETE"
+                conn.connectTimeout = 5000
+                conn.readTimeout = 5000
+                val code = conn.responseCode
+                appendLog("[STOP] Server session terminated: HTTP $code")
+            } catch (t: Throwable) {
+                appendLog("[STOP] Server cleanup failed: ${t.message}")
             }
         }
         
