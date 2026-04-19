@@ -257,6 +257,10 @@ class TelemostTunnelController(private val appContext: Context) {
         return id
     }
 
+    fun getSessionId(): String {
+        return prefs.getString("v2_session_id", "") ?: ""
+    }
+
     fun registerV2(endpoint: String, oauthToken: String, callback: (Boolean, String) -> Unit) {
         val deviceId = getDeviceId()
         try {
