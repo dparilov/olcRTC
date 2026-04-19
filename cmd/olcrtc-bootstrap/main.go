@@ -79,10 +79,14 @@ func main() {
 	// Create process supervisor
 	supervisor := server.NewSupervisor(registry, binary, dnsServer)
 
+	// Create v2 session manager with dynamic port pool and 30min TTL
+	sessionMgr := server.NewSessionManager(portStart, portEnd, supervisor, registry)
+
 	// Set up HTTP mux with bootstrap API
 	mux := http.NewServeMux()
 	registry.RegisterBootstrapRoutes(mux)
 	registry.RegisterV2Routes(mux)
+	registry.RegisterV2SessionRoutes(mux, sessionMgr)
 
 	// Health endpoint
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
@@ -183,6 +187,9 @@ func main() {
 	// Graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	// Start session cleanup loop (30min idle TTL)
+	sessionMgr.StartCleanupLoop(ctx)
 
 	// Auto-start tenant runtime on registration
 	registry.OnRegistered = func(tenant *server.Tenant) {

@@ -820,3 +820,77 @@ func (r *TenantRegistry) handleV2Register(w http.ResponseWriter, req *http.Reque
 func (r *TenantRegistry) RegisterV2Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/v2/register", r.handleV2Register)
 }
+
+// --- v2 Session Endpoints ---
+
+// RegisterV2SessionRoutes adds session management routes.
+func (r *TenantRegistry) RegisterV2SessionRoutes(mux *http.ServeMux, sm *SessionManager) {
+	mux.HandleFunc("/v2/session/create", func(w http.ResponseWriter, req *http.Request) {
+		if req.Method != http.MethodPost {
+			r.jsonError(w, http.StatusMethodNotAllowed, "POST required")
+			return
+		}
+		var body struct {
+			TenantID string `json:"tenant_id"`
+			Secret   string `json:"secret"`
+			DeviceID string `json:"device_id"`
+		}
+		if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+			r.jsonError(w, http.StatusBadRequest, "invalid JSON")
+			return
+		}
+		tenant := r.GetTenant(body.TenantID)
+		if tenant == nil {
+			r.jsonError(w, http.StatusNotFound, "tenant not found")
+			return
+		}
+		if secretFingerprint(body.Secret) != tenant.SecretHash {
+			r.jsonError(w, http.StatusForbidden, "secret mismatch")
+			return
+		}
+		session, err := sm.CreateSession(req.Context(), body.TenantID, body.DeviceID, body.Secret)
+		if err != nil {
+			r.jsonError(w, http.StatusServiceUnavailable, err.Error())
+			return
+		}
+		r.jsonResponse(w, http.StatusOK, map[string]interface{}{
+			"status":      "created",
+			"session_id":  session.SessionID,
+			"socks_port":  session.SOCKSPort,
+			"api_port":    session.APIPort,
+			"ttl_seconds": 1800,
+		})
+	})
+
+	mux.HandleFunc("/v2/session/", func(w http.ResponseWriter, req *http.Request) {
+		sessionID := strings.TrimPrefix(req.URL.Path, "/v2/session/")
+		if sessionID == "" {
+			r.jsonError(w, http.StatusBadRequest, "session_id required")
+			return
+		}
+		switch req.Method {
+		case http.MethodGet:
+			session := sm.GetSession(sessionID)
+			if session == nil {
+				r.jsonError(w, http.StatusNotFound, "session not found")
+				return
+			}
+			r.jsonResponse(w, http.StatusOK, session)
+		case http.MethodDelete:
+			if err := sm.TerminateSession(req.Context(), sessionID); err != nil {
+				r.jsonError(w, http.StatusNotFound, err.Error())
+				return
+			}
+			r.jsonResponse(w, http.StatusOK, map[string]string{"status": "terminated"})
+		default:
+			r.jsonError(w, http.StatusMethodNotAllowed, "GET or DELETE required")
+		}
+	})
+
+	mux.HandleFunc("/v2/sessions", func(w http.ResponseWriter, req *http.Request) {
+		count := sm.ActiveCount()
+		r.jsonResponse(w, http.StatusOK, map[string]interface{}{
+			"count": count,
+		})
+	})
+}
