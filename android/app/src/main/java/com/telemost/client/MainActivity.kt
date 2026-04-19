@@ -187,6 +187,7 @@ private fun MainScreen(controller: TelemostTunnelController, onLogin: () -> Unit
         TabRow(selectedTabIndex = selectedTab) {
             Tab(selected = selectedTab == 0, onClick = { selectedTab = 0 }) { Text("Control", modifier = Modifier.padding(14.dp)) }
             Tab(selected = selectedTab == 1, onClick = { selectedTab = 1 }) { Text("Settings", modifier = Modifier.padding(14.dp)) }
+            Tab(selected = selectedTab == 2, onClick = { selectedTab = 2 }) { Text("Apps", modifier = Modifier.padding(14.dp)) }
         }
 
         when (selectedTab) {
