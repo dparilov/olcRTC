@@ -82,6 +82,7 @@ func main() {
 	// Set up HTTP mux with bootstrap API
 	mux := http.NewServeMux()
 	registry.RegisterBootstrapRoutes(mux)
+	registry.RegisterV2Routes(mux)
 
 	// Health endpoint
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {

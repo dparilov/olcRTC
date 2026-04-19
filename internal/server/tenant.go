@@ -1,6 +1,8 @@
 package server
 
+
 import (
+	crypto_rand "crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -16,6 +18,8 @@ import (
 	"time"
 )
 
+var cryptoRandReader = crypto_rand.Reader
+
 // Tenant represents a registered tenant in the multi-tenant server.
 type Tenant struct {
 	TenantID        string    `json:"tenant_id"`
@@ -29,6 +33,9 @@ type Tenant struct {
 	Status          string    `json:"status"`            // registered / active / idle / disabled
 	CreatedAt       time.Time `json:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at"`
+	YandexUserID    string       `json:"yandex_user_id,omitempty"`
+	YandexLogin     string       `json:"yandex_login,omitempty"`
+	Devices         []DeviceInfo `json:"devices,omitempty"`
 }
 
 // TenantRegistry manages tenant lifecycle and port allocation.
@@ -216,6 +223,9 @@ type tenantState struct {
 	CreatedAt       time.Time `json:"created_at"`
 	EncSecret       string    `json:"enc_secret,omitempty"`
 	EncOAuthToken   string    `json:"enc_oauth_token,omitempty"`
+	YandexUserID    string       `json:"yandex_user_id,omitempty"`
+	YandexLogin     string       `json:"yandex_login,omitempty"`
+	Devices         []DeviceInfo `json:"devices,omitempty"`
 }
 
 func (r *TenantRegistry) stateFilePath() string {
@@ -247,6 +257,9 @@ func (r *TenantRegistry) saveStateLocked() {
 			DiskPath:        t.DiskPath,
 			Status:          t.Status,
 			CreatedAt:       t.CreatedAt,
+			YandexUserID: t.YandexUserID,
+			YandexLogin:  t.YandexLogin,
+			Devices:      t.Devices,
 		}
 		if aesKey != nil && t.Secret != "" {
 			if enc, err := encryptAESGCM(t.Secret, aesKey); err == nil {
@@ -310,7 +323,9 @@ func (r *TenantRegistry) loadState() {
 			DiskPath:        ts.DiskPath,
 			Status:          ts.Status,
 			CreatedAt:       ts.CreatedAt,
-			UpdatedAt:       ts.CreatedAt,
+			YandexUserID: ts.YandexUserID,
+			YandexLogin:  ts.YandexLogin,
+			Devices:      ts.Devices,
 		}
 		if aesKey != nil && ts.EncSecret != "" {
 			if secret, err := decryptAESGCM(ts.EncSecret, aesKey); err == nil {
@@ -616,4 +631,192 @@ func (r *TenantRegistry) jsonError(w http.ResponseWriter, code int, message stri
 		"status":  "error",
 		"message": message,
 	})
+}
+
+// --- v2 SSO Registration ---
+
+// DeviceInfo tracks a registered device for a tenant.
+type DeviceInfo struct {
+	DeviceID  string    `json:"device_id"`
+	LastSeen  time.Time `json:"last_seen"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// RegisterV2 creates or returns a tenant based on Yandex OAuth token.
+// Secret is auto-generated server-side. Device is registered.
+func (r *TenantRegistry) RegisterV2(oauthToken, deviceID string) (*Tenant, string, error) {
+	if oauthToken == "" {
+		return nil, "", fmt.Errorf("oauth_token is required")
+	}
+	if deviceID == "" {
+		return nil, "", fmt.Errorf("device_id is required")
+	}
+
+	// Validate token with Yandex
+	yandexUser, err := r.validateYandexToken(oauthToken)
+	if err != nil {
+		return nil, "", fmt.Errorf("invalid oauth token: %w", err)
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	// Check if tenant exists for this Yandex user
+	for _, t := range r.tenants {
+		if t.YandexUserID == yandexUser.ID {
+			// Existing tenant — update token, register device
+			t.OAuthToken = oauthToken
+			t.FallbackEnabled = true
+			t.UpdatedAt = time.Now()
+			t.registerDevice(deviceID)
+			r.saveStateLocked()
+			log.Printf("[V2] Re-login: user=%s tenant=%s device=%s", yandexUser.Login, t.TenantID, deviceID)
+			return t, t.Secret, nil
+		}
+	}
+
+	// New tenant — generate secret, allocate port
+	secret, err := generateSecret()
+	if err != nil {
+		return nil, "", fmt.Errorf("generate secret: %w", err)
+	}
+	hash := secretFingerprint(secret)
+
+	port := r.nextPort
+	if port > r.portEnd {
+		return nil, "", fmt.Errorf("no available ports (range exhausted)")
+	}
+	r.nextPort = port + 1
+
+	now := time.Now()
+	tenantID := fmt.Sprintf("t-%s", hash[:8])
+	tenant := &Tenant{
+		TenantID:        tenantID,
+		SecretHash:      hash,
+		Secret:          secret,
+		OAuthToken:      oauthToken,
+		SOCKSPort:       port,
+		APIPort:         port + 7001,
+		FallbackEnabled: true,
+		DiskPath:        fmt.Sprintf("app:/olcrtc/tenants/%s/active-room.json", tenantID),
+		Status:          "registered",
+		CreatedAt:       now,
+		UpdatedAt:       now,
+		YandexUserID:    yandexUser.ID,
+		YandexLogin:     yandexUser.Login,
+		Devices:         []DeviceInfo{{DeviceID: deviceID, LastSeen: now, CreatedAt: now}},
+	}
+
+	r.tenants[tenantID] = tenant
+	r.byHash[hash] = tenantID
+	log.Printf("[V2] New tenant: user=%s id=%s port=%d device=%s", yandexUser.Login, tenantID, port, deviceID)
+	r.saveStateLocked()
+
+	if r.OnRegistered != nil {
+		go r.OnRegistered(tenant)
+	}
+
+	return tenant, secret, nil
+}
+
+// registerDevice adds or updates a device for this tenant.
+func (t *Tenant) registerDevice(deviceID string) {
+	now := time.Now()
+	for i, d := range t.Devices {
+		if d.DeviceID == deviceID {
+			t.Devices[i].LastSeen = now
+			return
+		}
+	}
+	t.Devices = append(t.Devices, DeviceInfo{DeviceID: deviceID, LastSeen: now, CreatedAt: now})
+}
+
+// generateSecret creates a cryptographically random 32-byte hex secret.
+func generateSecret() (string, error) {
+	b := make([]byte, 32)
+	if _, err := io.ReadFull(cryptoRandReader, b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
+}
+
+// yandexUserInfo holds validated Yandex user identity.
+type yandexUserInfo struct {
+	ID    string `json:"id"`
+	Login string `json:"login"`
+}
+
+// validateYandexToken calls Yandex login API to validate token and get user info.
+func (r *TenantRegistry) validateYandexToken(token string) (*yandexUserInfo, error) {
+	req, err := http.NewRequest("GET", "https://login.yandex.ru/info?format=json", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "OAuth "+token)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("yandex api: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("yandex api HTTP %d: %s", resp.StatusCode, string(body))
+	}
+
+	var info yandexUserInfo
+	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+		return nil, fmt.Errorf("parse yandex response: %w", err)
+	}
+	if info.ID == "" {
+		return nil, fmt.Errorf("empty user id from yandex")
+	}
+	return &info, nil
+}
+
+// POST /v2/register — SSO-first tenant registration
+func (r *TenantRegistry) handleV2Register(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodPost {
+		r.jsonError(w, http.StatusMethodNotAllowed, "POST required")
+		return
+	}
+	var body struct {
+		OAuthToken string `json:"oauth_token"`
+		DeviceID   string `json:"device_id"`
+	}
+	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+		r.jsonError(w, http.StatusBadRequest, fmt.Sprintf("invalid JSON: %v", err))
+		return
+	}
+
+	tenant, secret, err := r.RegisterV2(body.OAuthToken, body.DeviceID)
+	if err != nil {
+		if strings.Contains(err.Error(), "invalid oauth token") {
+			r.jsonError(w, http.StatusUnauthorized, err.Error())
+		} else {
+			r.jsonError(w, http.StatusBadRequest, err.Error())
+		}
+		return
+	}
+
+	r.jsonResponse(w, http.StatusOK, map[string]interface{}{
+		"status":           "registered",
+		"tenant_id":        tenant.TenantID,
+		"secret":           secret,
+		"socks_port":       tenant.SOCKSPort,
+		"api_port":         tenant.APIPort,
+		"disk_path":        tenant.DiskPath,
+		"fallback_enabled": tenant.FallbackEnabled,
+		"yandex_user":      tenant.YandexLogin,
+		"capabilities": map[string]interface{}{
+			"vpn":      true,
+			"fallback": tenant.FallbackEnabled,
+		},
+	})
+}
+
+// RegisterV2Routes adds v2 SSO-first API routes.
+func (r *TenantRegistry) RegisterV2Routes(mux *http.ServeMux) {
+	mux.HandleFunc("/v2/register", r.handleV2Register)
 }
