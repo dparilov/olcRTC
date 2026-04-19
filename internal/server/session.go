@@ -292,6 +292,7 @@ func (sm *SessionManager) terminateSessionLocked(ctx context.Context, session *S
 	}
 
 	session.Status = "terminated"
+	delete(sm.lastCreate, session.TenantID) // allow immediate restart
 	log.Printf("[SESSION] Terminated: %s", session.SessionID)
 }
 

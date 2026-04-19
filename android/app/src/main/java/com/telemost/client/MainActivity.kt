@@ -267,7 +267,7 @@ private fun MainScreen(controller: TelemostTunnelController, onLogin: () -> Unit
                 // === STOP BUTTON (always visible) ===
                 Button(
                     onClick = {
-                        controller.stopTunnel() // handles VPN + tunnel + server session + local cleanup
+                        coroutineScope.launch(Dispatchers.IO) { controller.stopTunnel() }
                     },
                     modifier = Modifier.fillMaxWidth()
                 ) { Text("Stop") }
