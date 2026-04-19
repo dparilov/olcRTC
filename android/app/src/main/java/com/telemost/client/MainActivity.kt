@@ -509,7 +509,9 @@ private fun MainScreen(controller: TelemostTunnelController, onLogin: () -> Unit
                     val allApps = remember {
                         pm.getInstalledApplications(0)
                             .filter { app ->
-                                pm.getLaunchIntentForPackage(app.packageName) != null &&
+                                // Show user-installed apps + system apps with launcher activity
+                                (app.flags and android.content.pm.ApplicationInfo.FLAG_SYSTEM == 0 ||
+                                 pm.getLaunchIntentForPackage(app.packageName) != null) &&
                                 app.packageName != context.packageName
                             }
                             .sortedBy { pm.getApplicationLabel(it).toString().lowercase() }
