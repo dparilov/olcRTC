@@ -185,7 +185,7 @@ private fun MainScreen(controller: TelemostTunnelController, onLogin: () -> Unit
         // v2: secret comes from server, not from UI field
         // v2: secret from server, no length check
         controller.setOAuthToken(oauthToken)
-        controller.setMasterSecret(masterSecret)
+        // v2: secret from server, do not overwrite from UI state
         controller.setServerEndpoint(serverEndpoint)
         if (roomUrl.isNotBlank()) controller.setRoomUrl(roomUrl)
         validationMsg = ""
