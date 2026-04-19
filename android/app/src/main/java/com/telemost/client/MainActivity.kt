@@ -343,19 +343,6 @@ private fun MainScreen(controller: TelemostTunnelController, onLogin: () -> Unit
                 // --- Tenant Configuration ---
                 Text("Tenant Configuration", style = MaterialTheme.typography.titleSmall)
 
-                // Master Secret hidden in v2 — only visible in maintenance mode
-                if (advancedMode) {
-                    OutlinedTextField(
-                        value = masterSecret,
-                        onValueChange = { masterSecret = it; validationMsg = "" },
-                        label = { Text("Master Secret (auto-generated)") },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                        visualTransformation = PasswordVisualTransformation(),
-                        readOnly = true
-                    )
-                }
-
                 OutlinedTextField(
                     value = serverEndpoint,
                     onValueChange = { serverEndpoint = it },
@@ -377,7 +364,7 @@ private fun MainScreen(controller: TelemostTunnelController, onLogin: () -> Unit
                 }
 
                 // Create / Update Tenant button
-                val tenantButtonEnabled = masterSecret.length >= 8 && serverEndpoint.isNotBlank()
+                val tenantButtonEnabled = serverEndpoint.isNotBlank()
                 Button(
                     onClick = {
                         controller.setMasterSecret(masterSecret)
