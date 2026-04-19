@@ -475,6 +475,7 @@ class TelemostTunnelController(private val appContext: Context) {
                     val sessionSecret = getMasterSecret()
                     val sessionDeviceId = getDeviceId()
                     try {
+                        appendLog("[V2] PRE-SESSION: ep=$sessionEndpoint tid=$sessionTid secret_len=${sessionSecret.length} device=$sessionDeviceId")
                         val sUrl = java.net.URL("$sessionEndpoint/v2/session/create")
                         val sConn = sUrl.openConnection() as java.net.HttpURLConnection
                         sConn.requestMethod = "POST"
@@ -500,10 +501,14 @@ class TelemostTunnelController(private val appContext: Context) {
                             prefs.edit().putString("v2_session_id", sid).apply()
                             appendLog("[V2] Session: id=$sid port=$sp")
                         } else {
-                            appendLog("[V2] Session create failed: $sCode")
+                            appendLog("[V2] Session create failed: $sCode — aborting launch")
+                            _status.value = "Session create failed"
+                            return@launch
                         }
                     } catch (t: Throwable) {
-                        appendLog("[V2] Session error: ${t.message}")
+                        appendLog("[V2] Session error: ${t.message} — aborting launch")
+                        _status.value = "Session error"
+                        return@launch
                     }
                     appendLog("Sending room intent to $endpoint...")
                     _status.value = "Sending intent to server..."
@@ -749,29 +754,47 @@ class TelemostTunnelController(private val appContext: Context) {
     }
 
     fun stopTunnel() {
-        // Stop VPN if active
+        appendLog("[STOP] Full cleanup starting...")
+        
+        // 1. Stop VPN
         stopVpnService()
-        // Stop foreground service
+        
+        // 2. Stop local tunnel
         try {
-            appContext.stopService(Intent(appContext, TunnelForegroundService::class.java))
-        } catch (_: Exception) {}
-        // Cancel periodic upload and do final upload
-        logUploadJob?.cancel()
-        sendLogToDisk()
-        diagnosticsJob?.cancel()
-        scope.launch {
-            try {
-                Mobile.stop()
-                _status.value = "Stopped"
-                _diagnostics.value = "Diagnostics stopped"
-                appendLog("Tunnel stopped")
-            } catch (t: Throwable) {
-                _status.value = "Error"
-                appendLog("Stop failed: ${t.message}")
+            Mobile.stop()
+            appendLog("[STOP] Local tunnel stopped")
+        } catch (t: Throwable) {
+            appendLog("[STOP] Mobile.stop error: ${t.message}")
+        }
+        
+        // 3. Terminate server-side session
+        val endpoint = getServerEndpoint()
+        val sessionId = prefs.getString("v2_session_id", "") ?: ""
+        if (sessionId.isNotBlank() && endpoint.isNotBlank()) {
+            scope.launch {
+                try {
+                    val url = java.net.URL("$endpoint/v2/session/$sessionId")
+                    val conn = url.openConnection() as java.net.HttpURLConnection
+                    conn.requestMethod = "DELETE"
+                    conn.connectTimeout = 5000
+                    conn.readTimeout = 5000
+                    val code = conn.responseCode
+                    appendLog("[STOP] Server session $sessionId terminated: HTTP $code")
+                } catch (t: Throwable) {
+                    appendLog("[STOP] Server session cleanup failed: ${t.message}")
+                }
             }
         }
+        
+        // 4. Clear local session state
+        prefs.edit().remove("v2_session_id").apply()
+        
+        // 5. Update status
+        _status.value = "Idle"
+        appendLog("[STOP] Full cleanup done")
     }
 
+    
     fun isTunnelReady(): Boolean {
         val s = _status.value
         return s == "SOCKS ready" || s.startsWith("Connected") || Mobile.isRunning()

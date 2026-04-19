@@ -267,28 +267,7 @@ private fun MainScreen(controller: TelemostTunnelController, onLogin: () -> Unit
                 // === STOP BUTTON (always visible) ===
                 Button(
                     onClick = {
-                        // Full cleanup: server session + tunnel + VPN
-                        controller.stopVpnService()
-                        controller.stopTunnel()
-                        // Terminate server-side session
-                        val ep = controller.getServerEndpoint()
-                        val sessionId = controller.getSessionId()
-                        if (sessionId.isNotBlank() && ep.isNotBlank()) {
-                            coroutineScope.launch(Dispatchers.IO) {
-                                try {
-                                    val url = java.net.URL("$ep/v2/session/$sessionId")
-                                    val conn = url.openConnection() as java.net.HttpURLConnection
-                                    conn.requestMethod = "DELETE"
-                                    conn.connectTimeout = 5000
-                                    conn.readTimeout = 5000
-                                    val code = conn.responseCode
-                                    controller.appendLog("[STOP] Server session terminated: $code")
-                                } catch (t: Throwable) {
-                                    controller.appendLog("[STOP] Server cleanup failed: ${t.message}")
-                                }
-                            }
-                        }
-                        controller.appendLog("[STOP] Full cleanup: VPN off, tunnel stopped, session terminated")
+                        controller.stopTunnel() // handles VPN + tunnel + server session + local cleanup
                     },
                     modifier = Modifier.fillMaxWidth()
                 ) { Text("Stop") }
