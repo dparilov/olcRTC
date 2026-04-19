@@ -217,8 +217,8 @@ private fun MainScreen(controller: TelemostTunnelController, onLogin: () -> Unit
                 }
 
                 Text(
-                    if (masterSecret.isNotBlank()) "\u2713 Secret configured"
-                    else "\u26A0 Set Master Secret in Settings tab",
+                    if (controller.getMasterSecret().isNotBlank()) "\u2713 Secret configured"
+                    else "\u26A0 Login required",
                     style = MaterialTheme.typography.bodySmall
                 )
 
