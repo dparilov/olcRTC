@@ -3,6 +3,8 @@ package server
 import (
 	"context"
 	"fmt"
+	"net"
+	"os/exec"
 	"log"
 	"sync"
 	"time"
@@ -59,11 +61,37 @@ func NewSessionManager(portStart, portEnd int, supervisor *Supervisor, registry 
 }
 
 // allocatePort takes a port from the pool.
+// isPortFree checks if a port is available at OS level.
+func isPortFree(port int) bool {
+	ln, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+	if err != nil {
+		return false
+	}
+	ln.Close()
+	return true
+}
+
+// killProcessOnPort kills any process listening on the given port.
+func killProcessOnPort(port int) {
+	cmd := exec.Command("fuser", "-k", fmt.Sprintf("%d/tcp", port))
+	cmd.Run() // best effort, ignore errors
+	log.Printf("[SESSION] Killed stale process on port %d", port)
+}
+
 func (sm *SessionManager) allocatePort() (int, int, error) {
 	for _, p := range sm.portPool {
 		if !sm.portInUse[p] {
 			apiPort := p + 1000 // SOCKS 2080 -> API 3080
 			if !sm.portInUse[apiPort] {
+				// Check OS-level port availability, kill stale if needed
+				if !isPortFree(p) {
+					log.Printf("[SESSION] Port %d occupied by stale process, killing...", p)
+					killProcessOnPort(p)
+				}
+				if !isPortFree(apiPort) {
+					log.Printf("[SESSION] Port %d occupied by stale process, killing...", apiPort)
+					killProcessOnPort(apiPort)
+				}
 				sm.portInUse[p] = true
 				sm.portInUse[apiPort] = true
 				return p, apiPort, nil
