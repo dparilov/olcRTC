@@ -122,15 +122,35 @@ func (s *Supervisor) StartTenant(ctx context.Context, tenant *Tenant) error {
 // StopTenant stops a tenant runtime process.
 func (s *Supervisor) StopTenant(tenantID string) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	proc, ok := s.processes[tenantID]
 	if !ok || proc.Status != "running" {
+		s.mu.Unlock()
 		return
 	}
+	delete(s.processes, tenantID)
+	s.mu.Unlock()
 
-	log.Printf("[SUPERVISOR] Stopping tenant %s", tenantID)
+	pid := 0
+	if proc.Cmd != nil && proc.Cmd.Process != nil {
+		pid = proc.Cmd.Process.Pid
+	}
+	log.Printf("[SUPERVISOR] Stopping tenant %s (pid %d)", tenantID, pid)
 	proc.Cancel()
+	if proc.Cmd != nil && proc.Cmd.Process != nil {
+		proc.Cmd.Process.Kill()
+		// Wait for actual exit to prevent port conflicts
+		done := make(chan struct{})
+		go func() {
+			proc.Cmd.Wait()
+			close(done)
+		}()
+		select {
+		case <-done:
+			log.Printf("[SUPERVISOR] Tenant %s (pid %d) exited", tenantID, pid)
+		case <-time.After(5 * time.Second):
+			log.Printf("[SUPERVISOR] Tenant %s (pid %d) kill timeout", tenantID, pid)
+		}
+	}
 	proc.Status = "stopped"
 	proc.Tenant.Status = "idle"
 }

@@ -281,13 +281,13 @@ class TelemostTunnelController(private val appContext: Context) {
                 val secret = json.optString("secret", "")
                 val sp = json.optInt("socks_port", 0)
                 val yandexUser = json.optString("yandex_user", "")
-                appendLog("[V2-DEBUG] Response: tid=$tid secret=${secret.take(8)}...(len=${secret.length}) port=$sp user=$yandexUser")
+                appendLog("[V2] Response: tid=$tid port=$sp user=$yandexUser secret_len=${secret.length}")
                 if (tid.isNotBlank()) updateTenantId(tid)
                 if (secret.isNotBlank()) {
                     setMasterSecret(secret)
-                    appendLog("[V2-DEBUG] setMasterSecret OK, verify=${getMasterSecret().take(8)}...")
+                    appendLog("[V2] Secret stored OK")
                 } else {
-                    appendLog("[V2-DEBUG] WARNING: server returned EMPTY secret!")
+                    appendLog("[V2] WARNING: server returned empty secret!")
                 }
                 if (sp > 0) setSocksPort(sp)
                 appendLog("[V2] Registered: user=$yandexUser tenant=$tid port=$sp")
@@ -351,6 +351,7 @@ class TelemostTunnelController(private val appContext: Context) {
 
     fun updateTenantId(id: String) {
         _tenantId.value = id
+        prefs.edit().putString("tenant_id", id).apply()
     }
 
     /**
@@ -436,7 +437,7 @@ class TelemostTunnelController(private val appContext: Context) {
         val cookies = getYandexCookies()
         val token = getOAuthToken()
         val secret = getMasterSecret()
-                appendLog("[DEBUG] createAndLaunch secret=${secret.take(8)}... (len=${secret.length})")
+                appendLog("[V2] createAndLaunch: secret_len=${secret.length} tenant=${getTenantId()}")
         if (cookies.isBlank()) {
             appendLog("Cannot create room: Yandex cookies missing. Tap 'Login to Yandex' first.")
             _status.value = "Login required"
