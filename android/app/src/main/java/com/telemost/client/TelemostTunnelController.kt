@@ -1173,4 +1173,17 @@ class TelemostTunnelController(private val appContext: Context) {
         prefs.edit().putStringSet("vpn_apps", current).apply()
     }
 
+
+    fun listInstalledApps(): String {
+        val pm = appContext.packageManager
+        val sb = StringBuilder()
+        pm.getInstalledApplications(0).forEach { appInfo: android.content.pm.ApplicationInfo ->
+            val label = pm.getApplicationLabel(appInfo).toString().lowercase()
+            if (label.contains("telegram") || label.contains("whatsapp") || label.contains("chrome") || label.contains("browser")) {
+                sb.appendLine("${pm.getApplicationLabel(appInfo)}: ${appInfo.packageName}")
+            }
+        }
+        return sb.toString()
+    }
+
 }

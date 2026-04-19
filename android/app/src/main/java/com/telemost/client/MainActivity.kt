@@ -466,6 +466,12 @@ private fun MainScreen(controller: TelemostTunnelController, onLogin: () -> Unit
             ) {
                 Text("VPN Apps", style = MaterialTheme.typography.headlineSmall)
                 Text("Apps routing through VPN tunnel", style = MaterialTheme.typography.bodySmall)
+                
+                // Debug: show found apps
+                val foundApps = remember { controller.listInstalledApps() }
+                if (foundApps.isNotBlank()) {
+                    Text("Found: $foundApps", style = MaterialTheme.typography.bodySmall)
+                }
 
                 Spacer(modifier = Modifier.height(8.dp))
 
