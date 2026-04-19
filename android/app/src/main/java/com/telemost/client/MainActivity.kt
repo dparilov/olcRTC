@@ -422,24 +422,9 @@ private fun MainScreen(controller: TelemostTunnelController, onLogin: () -> Unit
                     modifier = Modifier.fillMaxWidth()
                 ) { Text("Login to Yandex / Create Tenant") }
 
-                // --- Yandex Account (maintenance only) ---
-                if (advancedMode) {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text("Yandex Account (maintenance)", style = MaterialTheme.typography.titleSmall)
-
-                    Button(onClick = { onLogin() }, modifier = Modifier.fillMaxWidth()) {
-                        Text("Re-login to Yandex")
-                    }
-
-                    if (controller.hasYandexCookies()) {
-                        Text("\u2713 Yandex cookies received", style = MaterialTheme.typography.bodySmall)
-                    }
-                }
-
-                // --- OAuth / Fallback (maintenance only) ---
-                if (advancedMode) {
+                // --- OAuth Token (Tenant Override) ---
                 Spacer(modifier = Modifier.height(8.dp))
-                Text("Fallback (maintenance)", style = MaterialTheme.typography.titleSmall)
+                Text("OAuth Token (Tenant Override)", style = MaterialTheme.typography.titleSmall)
 
                 OutlinedTextField(
                     value = oauthToken,
@@ -487,7 +472,7 @@ private fun MainScreen(controller: TelemostTunnelController, onLogin: () -> Unit
                                 }
                             },
                             modifier = Modifier.fillMaxWidth()
-                        ) { Text("Send OAuth to Server") }
+                        ) { Text("Apply Token to Tenant") }
 
                         if (oauthStatus == "attached") {
                             Text("\u2713 OAuth token sent to server", style = MaterialTheme.typography.bodySmall)
@@ -498,7 +483,7 @@ private fun MainScreen(controller: TelemostTunnelController, onLogin: () -> Unit
                     Text("\u26A0 No OAuth token — Disk fallback disabled", style = MaterialTheme.typography.bodySmall)
                 }
 
-                } // end advancedMode OAuth section
+
 
                 if (validationMsg.isNotBlank()) {
                     Spacer(modifier = Modifier.height(4.dp))
