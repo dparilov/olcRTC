@@ -269,37 +269,8 @@ private fun MainScreen(controller: TelemostTunnelController, onLogin: () -> Unit
                     Text("Advanced Controls", style = MaterialTheme.typography.titleSmall)
 
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(onClick = {
-                            if (saveSettings()) controller.startServer()
-                        }) { Text("Start Server") }
-                        Button(onClick = {
-                            if (saveSettings()) controller.connectClient()
-                        }) { Text("Connect Client") }
-                    }
-
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Button(onClick = { controller.stopTunnel() }) { Text("Stop") }
                         Button(onClick = { controller.rerunDiagnostics() }) { Text("Diagnostics") }
-                    }
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
-                    ) {
-                        Text("VPN mode (all traffic)")
-                        Switch(
-                            checked = controller.isVpnMode(),
-                            enabled = status.contains("SOCKS ready") || status.startsWith("Connected") || status == "Running",
-                            onCheckedChange = { enabled ->
-                                try {
-                                    controller.setVpnMode(enabled)
-                                    if (enabled) onVpnRequest() else controller.stopVpnService()
-                                } catch (t: Throwable) {
-                                    controller.appendLog("[VPN] CRASH in toggle: ${t.javaClass.simpleName}: ${t.message}")
-                                }
-                            }
-                        )
                     }
 
                     Text("Logs:", style = MaterialTheme.typography.titleSmall)
