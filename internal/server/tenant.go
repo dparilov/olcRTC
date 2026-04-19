@@ -3,6 +3,7 @@ package server
 
 import (
 	crypto_rand "crypto/rand"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -855,7 +856,7 @@ func (r *TenantRegistry) RegisterV2SessionRoutes(mux *http.ServeMux, sm *Session
 			r.jsonError(w, http.StatusForbidden, "secret mismatch")
 			return
 		}
-		session, err := sm.CreateSession(req.Context(), body.TenantID, body.DeviceID, body.Secret)
+		session, err := sm.CreateSession(context.Background(), body.TenantID, body.DeviceID, body.Secret)
 		if err != nil {
 			r.jsonError(w, http.StatusServiceUnavailable, err.Error())
 			return
