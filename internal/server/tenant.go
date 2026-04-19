@@ -184,11 +184,18 @@ func (r *TenantRegistry) GetBySecret(secret string) *Tenant {
 func (r *TenantRegistry) FindBySignature(verifyFunc func(secret string) error) *Tenant {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
+	log.Printf("[DEBUG] FindBySignature: checking %d tenants", len(r.tenants))
 	for _, t := range r.tenants {
 		if t.Secret != "" {
+			log.Printf("[DEBUG] Trying tenant %s secret=%s...", t.TenantID, t.Secret[:8])
 			if err := verifyFunc(t.Secret); err == nil {
+				log.Printf("[DEBUG] MATCH: tenant %s", t.TenantID)
 				return t
+			} else {
+				log.Printf("[DEBUG] NO MATCH: tenant %s err=%v", t.TenantID, err)
 			}
+		} else {
+			log.Printf("[DEBUG] Tenant %s has EMPTY secret!", t.TenantID)
 		}
 	}
 	return nil

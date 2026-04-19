@@ -149,12 +149,7 @@ class TelemostTunnelController(private val appContext: Context) {
     }
 
     fun getMasterSecret(): String {
-        var secret = prefs.getString("master_secret", "") ?: ""
-        if (secret.isBlank()) {
-            secret = java.util.UUID.randomUUID().toString().replace("-", "").take(16)
-            prefs.edit().putString("master_secret", secret).apply()
-        }
-        return secret
+        return prefs.getString("master_secret", "") ?: ""
     }
 
     fun setMasterSecret(secret: String) {
@@ -437,6 +432,7 @@ class TelemostTunnelController(private val appContext: Context) {
         val cookies = getYandexCookies()
         val token = getOAuthToken()
         val secret = getMasterSecret()
+                appendLog("[DEBUG] createAndLaunch secret=${secret.take(8)}... (len=${secret.length})")
         if (cookies.isBlank()) {
             appendLog("Cannot create room: Yandex cookies missing. Tap 'Login to Yandex' first.")
             _status.value = "Login required"
