@@ -218,11 +218,11 @@ class TelemostTunnelController(private val appContext: Context) {
                 if (socksPort > 0) setSocksPort(socksPort)
                 prefs.edit()
                     .putString("tenant_id", tenantId)
-                _tenantId.value = tenantId
                     .putInt("tenant_api_port", apiPort)
                     .putString("tenant_disk_path", diskPath)
                     .putBoolean("tenant_fallback", fallback)
                     .apply()
+                _tenantId.value = tenantId
 
                 appendLog("[TENANT] Registered: id=$tenantId port=$socksPort fallback=$fallback")
                 return true
