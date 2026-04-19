@@ -467,8 +467,44 @@ class TelemostTunnelController(private val appContext: Context) {
                 var intentDelivered = false
 
                 if (endpoint.isNotBlank()) {
-                    // v2: tenant already registered from Login flow, skip v1 re-registration
-                    appendLog("[V2] Using existing tenant registration")
+                    // v2: create session (allocates port, starts runtime)
+                    appendLog("[V2] Creating session...")
+                    _status.value = "Creating session..."
+                    val sessionEndpoint = endpoint
+                    val sessionTid = getTenantId()
+                    val sessionSecret = getMasterSecret()
+                    val sessionDeviceId = getDeviceId()
+                    try {
+                        val sUrl = java.net.URL("$sessionEndpoint/v2/session/create")
+                        val sConn = sUrl.openConnection() as java.net.HttpURLConnection
+                        sConn.requestMethod = "POST"
+                        sConn.setRequestProperty("Content-Type", "application/json")
+                        sConn.connectTimeout = 15000
+                        sConn.readTimeout = 15000
+                        sConn.doOutput = true
+                        val sBody = org.json.JSONObject()
+                            .put("tenant_id", sessionTid)
+                            .put("secret", sessionSecret)
+                            .put("device_id", sessionDeviceId)
+                            .toString()
+                        sConn.outputStream.use { it.write(sBody.toByteArray()) }
+                        val sCode = sConn.responseCode
+                        val sResp = try { sConn.inputStream.bufferedReader().readText() } catch (_: Exception) {
+                            sConn.errorStream?.bufferedReader()?.readText() ?: ""
+                        }
+                        if (sCode in 200..299) {
+                            val sJson = org.json.JSONObject(sResp)
+                            val sid = sJson.optString("session_id", "")
+                            val sp = sJson.optInt("socks_port", 0)
+                            if (sp > 0) setSocksPort(sp)
+                            prefs.edit().putString("v2_session_id", sid).apply()
+                            appendLog("[V2] Session: id=$sid port=$sp")
+                        } else {
+                            appendLog("[V2] Session create failed: $sCode")
+                        }
+                    } catch (t: Throwable) {
+                        appendLog("[V2] Session error: ${t.message}")
+                    }
                     appendLog("Sending room intent to $endpoint...")
                     _status.value = "Sending intent to server..."
                     val recordId = sendRoomIntent(endpoint, intentJson)
