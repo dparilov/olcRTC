@@ -184,7 +184,7 @@ private fun MainScreen(controller: TelemostTunnelController, onLogin: () -> Unit
     fun saveSettings(): Boolean {
         // v2: secret comes from server, not from UI field
         // v2: secret from server, no length check
-        controller.setOAuthToken(oauthToken)
+        // v2: oauth token from server, do not overwrite
         // v2: secret from server, do not overwrite from UI state
         controller.setServerEndpoint(serverEndpoint)
         if (roomUrl.isNotBlank()) controller.setRoomUrl(roomUrl)
@@ -393,7 +393,7 @@ private fun MainScreen(controller: TelemostTunnelController, onLogin: () -> Unit
                     if (currentTenantId.isNotBlank()) {
                         Button(
                             onClick = {
-                                controller.setOAuthToken(oauthToken)
+                                // v2: oauth token from server, do not overwrite
                                 val ep = controller.getServerEndpoint()
                                 coroutineScope.launch(Dispatchers.IO) {
                                     try {
@@ -439,7 +439,7 @@ private fun MainScreen(controller: TelemostTunnelController, onLogin: () -> Unit
                 if (currentTenantId.isNotBlank()) {
                     Button(
                         onClick = {
-                            controller.setOAuthToken(oauthToken)
+                            // v2: oauth token from server, do not overwrite
                             val ep = controller.getServerEndpoint()
                             coroutineScope.launch(Dispatchers.IO) {
                                 try {
