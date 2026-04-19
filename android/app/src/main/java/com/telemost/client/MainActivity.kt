@@ -514,13 +514,18 @@ private fun MainScreen(controller: TelemostTunnelController, onLogin: () -> Unit
                                  pm.getLaunchIntentForPackage(app.packageName) != null) &&
                                 app.packageName != context.packageName
                             }
-                            .sortedBy { pm.getApplicationLabel(it).toString().lowercase() }
+                            .sortedWith(
+                            compareBy<android.content.pm.ApplicationInfo> {
+                                // User apps first (flag 0), then system apps (flag 1)
+                                if (it.flags and android.content.pm.ApplicationInfo.FLAG_SYSTEM == 0) 0 else 1
+                            }.thenBy { pm.getApplicationLabel(it).toString().lowercase() }
+                        )
                     }
 
                     Spacer(modifier = Modifier.height(8.dp))
                     Text("Select app to add:", style = MaterialTheme.typography.titleSmall)
 
-                    allApps.filter { it.packageName !in vpnAppsState }.take(50).forEach { app ->
+                    allApps.filter { it.packageName !in vpnAppsState }.forEach { app ->
                         val pkg = app.packageName
                         val name = pm.getApplicationLabel(app).toString()
                         Row(
