@@ -94,6 +94,21 @@ func main() {
 		fmt.Fprintf(w, "ok")
 	})
 
+	// Release manifest for Android update checks
+	mux.HandleFunc("/api/v2/releases/android-stable.json", func(w http.ResponseWriter, r *http.Request) {
+		manifestPath := stateDir + "/android-stable.json"
+		data, err := os.ReadFile(manifestPath)
+		if err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			fmt.Fprintf(w, `{"error":"manifest not found"}`)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-cache, max-age=60")
+		w.Write(data)
+	})
+
 	// Shared frontdoor: POST /api/room-intent routes to correct tenant by signature
 	mux.HandleFunc("/api/room-intent", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {

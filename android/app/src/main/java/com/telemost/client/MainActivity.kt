@@ -144,6 +144,7 @@ private fun MainScreen(controller: TelemostTunnelController, onLogin: () -> Unit
     val diagnostics by controller.diagnostics.collectAsState()
     val logs by controller.logs.collectAsState()
     val currentTenantId by controller.tenantIdFlow.collectAsState()
+    val updateInfo by controller.updateAvailable.collectAsState()
     var selectedTab by remember { mutableIntStateOf(0) }
     var advancedMode by remember { mutableStateOf(false) }
     var versionTapCount by remember { mutableIntStateOf(0) }
@@ -201,6 +202,35 @@ private fun MainScreen(controller: TelemostTunnelController, onLogin: () -> Unit
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 Text("olcRTC", style = MaterialTheme.typography.headlineSmall)
+
+                // Update available banner
+                if (updateInfo != null) {
+                    val info = updateInfo!!
+                    androidx.compose.material3.Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = androidx.compose.material3.CardDefaults.cardColors(
+                            containerColor = androidx.compose.material3.MaterialTheme.colorScheme.primaryContainer
+                        )
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Text(
+                                "Update available: v${info.latestVersion}",
+                                style = MaterialTheme.typography.titleSmall
+                            )
+                            if (info.releaseNotes.isNotBlank()) {
+                                Text(info.releaseNotes, style = MaterialTheme.typography.bodySmall)
+                            }
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Button(onClick = {
+                                val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(info.apkUrl))
+                                context.startActivity(intent)
+                            }) {
+                                Text("Download Update")
+                            }
+                        }
+                    }
+                }
+
                 Text("Status: $status")
                 Text("Room: $meeting")
                 Text("SOCKS Port: ${controller.getSocksPort()}")

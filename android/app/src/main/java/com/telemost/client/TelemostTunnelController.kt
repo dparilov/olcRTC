@@ -72,12 +72,21 @@ class TelemostTunnelController(private val appContext: Context) {
     private val _diagnostics = MutableStateFlow("Diagnostics have not run yet")
     private val _logs = MutableStateFlow("")
     private val _tenantId = MutableStateFlow("")
+    private val _updateAvailable = MutableStateFlow<UpdateInfo?>(null)
 
     val status: StateFlow<String> = _status.asStateFlow()
     val meeting: StateFlow<String> = _meeting.asStateFlow()
     val diagnostics: StateFlow<String> = _diagnostics.asStateFlow()
     val logs: StateFlow<String> = _logs.asStateFlow()
     val tenantIdFlow: StateFlow<String> = _tenantId.asStateFlow()
+    val updateAvailable: StateFlow<UpdateInfo?> = _updateAvailable.asStateFlow()
+
+    data class UpdateInfo(
+        val latestVersion: String,
+        val releaseNotes: String,
+        val apkUrl: String,
+        val required: Boolean
+    )
 
     init {
         // Reset transient state on each app start (only secrets+cookies persist)
@@ -101,6 +110,11 @@ class TelemostTunnelController(private val appContext: Context) {
                 delay(60_000) // upload logs every 60s
                 try { sendLogToDisk() } catch (_: Exception) {}
             }
+        }
+        // Check for updates on startup (after 5s delay)
+        scope.launch {
+            delay(5000)
+            checkForUpdate()
         }
     }
 
@@ -905,6 +919,55 @@ class TelemostTunnelController(private val appContext: Context) {
 
     fun uploadLogNow() {
         try { sendLogToDisk() } catch (_: Throwable) {}
+    }
+
+    fun checkForUpdate() {
+        scope.launch {
+            try {
+                val endpoint = getServerEndpoint().trimEnd('/')
+                if (endpoint.isBlank()) return@launch
+                val url = java.net.URL("$endpoint/api/v2/releases/android-stable.json")
+                val conn = url.openConnection() as java.net.HttpURLConnection
+                conn.connectTimeout = 10000
+                conn.readTimeout = 10000
+                val json = org.json.JSONObject(conn.inputStream.bufferedReader().readText())
+                conn.disconnect()
+
+                val latestVersion = json.optString("latest_version", "")
+                if (latestVersion.isBlank()) return@launch
+
+                val currentVersion = try {
+                    appContext.packageManager.getPackageInfo(appContext.packageName, 0).versionName ?: ""
+                } catch (_: Exception) { "" }
+
+                if (compareVersions(latestVersion, currentVersion) > 0) {
+                    _updateAvailable.value = UpdateInfo(
+                        latestVersion = latestVersion,
+                        releaseNotes = json.optString("release_notes", ""),
+                        apkUrl = json.optString("apk_url", ""),
+                        required = json.optBoolean("required", false)
+                    )
+                    appendLog("Update available: $currentVersion -> $latestVersion")
+                } else {
+                    _updateAvailable.value = null
+                    appendLog("App is up to date ($currentVersion)")
+                }
+            } catch (t: Throwable) {
+                appendLog("Update check failed: ${t.message}")
+            }
+        }
+    }
+
+    private fun compareVersions(a: String, b: String): Int {
+        val pa = a.split(".").map { it.toIntOrNull() ?: 0 }
+        val pb = b.split(".").map { it.toIntOrNull() ?: 0 }
+        val len = maxOf(pa.size, pb.size)
+        for (i in 0 until len) {
+            val va = pa.getOrElse(i) { 0 }
+            val vb = pb.getOrElse(i) { 0 }
+            if (va != vb) return va.compareTo(vb)
+        }
+        return 0
     }
 
     fun sendLogToDisk() {
