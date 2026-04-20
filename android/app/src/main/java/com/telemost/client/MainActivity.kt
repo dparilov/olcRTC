@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
@@ -106,7 +107,7 @@ class MainActivity : ComponentActivity() {
         }
         setContent {
             MaterialTheme {
-                Surface(modifier = Modifier.fillMaxSize()) {
+                Surface(modifier = Modifier.fillMaxSize().systemBarsPadding()) {
                     controller.handleIntent(this@MainActivity.intent)
                     MainScreen(controller, onLogin = {
                         loginLauncher.launch(Intent(this@MainActivity, YandexLoginActivity::class.java))
