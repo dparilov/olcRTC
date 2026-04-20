@@ -84,7 +84,11 @@ class TelemostTunnelController(private val appContext: Context) {
         prefs.edit().putBoolean("vpn_mode", false).putString("room_url", "").apply()
         Mobile.touch()
         Mobile.setDebug(true)
-        Mobile.setLogWriter(LogWriter { line -> appendLog(line) })
+        Mobile.setLogWriter(LogWriter { line ->
+            // Filter out noisy per-packet logs
+            if (line.contains("VP8") || line.contains("frame #") || line.contains("bytes recv") || line.contains("bytes sent") || line.contains("RTCP") || line.contains("RTP")) return@LogWriter
+            appendLog(line)
+        })
         _status.value = if (Mobile.isRunning()) "Running" else "Idle"
         _tenantId.value = prefs.getString("tenant_id", "") ?: ""
         val versionName = try {
@@ -94,7 +98,7 @@ class TelemostTunnelController(private val appContext: Context) {
         // Start periodic log upload to Yandex Disk (every 60s)
         logUploadJob = scope.launch {
             while (true) {
-                delay(10_000) // 10s for crash diagnostics (normally 60s)
+                delay(60_000) // upload logs every 60s
                 try { sendLogToDisk() } catch (_: Exception) {}
             }
         }
@@ -905,33 +909,38 @@ class TelemostTunnelController(private val appContext: Context) {
 
     fun sendLogToDisk() {
         val token = getOAuthToken()
-        if (token.isBlank()) {
-            appendLog("Cannot send log: OAuth token missing")
-            return
-        }
+        if (token.isBlank()) return  // silent — no token yet
         scope.launch {
             try {
-                val logContent = try { java.io.File(appContext.filesDir, "olcrtc-log.txt").readText() } catch (_: Exception) { _logs.value }
+                val logFile = java.io.File(appContext.filesDir, "olcrtc-log.txt")
+                val logContent = try { logFile.readText() } catch (_: Exception) { _logs.value }
+                if (logContent.isBlank() || logContent.length < 50) return@launch  // nothing meaningful
+                
                 val timestamp = java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US).format(java.util.Date())
                 val filename = "olcrtc-android-log-$timestamp.txt"
-                appendLog("Uploading log to Yandex Disk ($filename)...")
                 
                 val urlConn = java.net.URL("https://cloud-api.yandex.net/v1/disk/resources/upload?path=app%3A%2Folcrtc%2F$filename&overwrite=true")
                     .openConnection() as java.net.HttpURLConnection
                 urlConn.setRequestProperty("Authorization", "OAuth $token")
+                urlConn.connectTimeout = 10000
+                urlConn.readTimeout = 10000
                 val uploadUrl = org.json.JSONObject(urlConn.inputStream.bufferedReader().readText()).getString("href")
                 urlConn.disconnect()
                 
                 val putConn = java.net.URL(uploadUrl).openConnection() as java.net.HttpURLConnection
                 putConn.requestMethod = "PUT"
                 putConn.setRequestProperty("Content-Type", "text/plain")
+                putConn.connectTimeout = 15000
+                putConn.readTimeout = 15000
                 putConn.doOutput = true
                 putConn.outputStream.write(logContent.toByteArray())
                 val code = putConn.responseCode
                 putConn.disconnect()
                 
                 if (code in 200..201) {
-                    appendLog("Log uploaded: $filename")
+                    appendLog("Log uploaded: $filename (${logContent.length} bytes)")
+                    // Clear log file after successful upload to prevent unbounded growth
+                    try { logFile.writeText("") } catch (_: Exception) {}
                 } else {
                     appendLog("Log upload failed: HTTP $code")
                 }
@@ -1164,13 +1173,20 @@ class TelemostTunnelController(private val appContext: Context) {
     
     fun getVpnApps(): Set<String> {
         val saved = prefs.getStringSet("vpn_apps", null)
-        return saved ?: defaultVpnApps
+        val result = saved ?: defaultVpnApps
+        // Sync to plain prefs for VpnService
+        appContext.getSharedPreferences("olcrtc", android.content.Context.MODE_PRIVATE)
+            .edit().putStringSet("vpn_apps", result).apply()
+        return result
     }
     
     fun setVpnApp(pkg: String, enabled: Boolean) {
         val current = getVpnApps().toMutableSet()
         if (enabled) current.add(pkg) else current.remove(pkg)
         prefs.edit().putStringSet("vpn_apps", current).apply()
+        // Also save to plain prefs so VpnService can read it
+        appContext.getSharedPreferences("olcrtc", android.content.Context.MODE_PRIVATE)
+            .edit().putStringSet("vpn_apps", current).apply()
     }
 
 
