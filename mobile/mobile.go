@@ -82,8 +82,9 @@ func SetDebug(enabled bool) {
 // keyHex: 64-char hex encryption key
 // socksPort: local SOCKS5 proxy port (e.g. 10808)
 // duo: use dual channels for higher throughput
-// socksUser/socksPass: SOCKS5 credentials (empty = no auth).
-func Start(roomID, keyHex string, socksPort int, duo bool, socksUser, socksPass string) error {
+// socksUser/socksPass: SOCKS5 credentials (empty = no auth)
+// dnsServer: custom DNS resolver address (e.g. "1.1.1.1:53", empty = default).
+func Start(roomID, keyHex string, socksPort int, duo bool, socksUser, socksPass, dnsServer string) error {
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -94,6 +95,10 @@ func Start(roomID, keyHex string, socksPort int, duo bool, socksUser, socksPass 
 		return errRoomIDRequired
 	case keyHex == "":
 		return errKeyHexRequired
+	}
+
+	if dnsServer != "" {
+		telemost.SetDNSServer(dnsServer)
 	}
 
 	roomURL := "https://telemost.yandex.ru/j/" + roomID
