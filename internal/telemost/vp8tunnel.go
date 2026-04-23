@@ -3,6 +3,7 @@ package telemost
 import (
 	"encoding/binary"
 	"log"
+	"os"
 	"sync/atomic"
 	"time"
 
@@ -13,6 +14,10 @@ import (
 )
 
 const DataFrameMarker = 0xFF
+
+// forensicMode enables detailed VP8 frame logging for diagnostics.
+// Set OLCRTC_FORENSIC=1 to enable.
+var forensicMode = os.Getenv("OLCRTC_FORENSIC") == "1"
 
 // vp8DataPrefix is prepended to data frames so the SFU sees a valid
 // VP8 interframe header and forwards the packet instead of dropping it.
@@ -128,8 +133,9 @@ func (s *VP8Sender) Run(sessionClose, peerClose <-chan struct{}) {
 				frame = vp8Interframe
 			}
 			err := s.track.WriteSample(media.Sample{Data: frame, Duration: interval})
-			if s.frameCount <= 3 || s.frameCount%500 == 0 {
-				log.Printf("[VP8TX] keepalive frame=%d first=0x%02x err=%v", s.frameCount, frame[0], err)
+			if s.frameCount <= 3 || s.frameCount%25 == 0 {
+				log.Printf("[VP8TX-FORENSIC] KEEPALIVE frame=%d size=%d first=0x%02x duration=%v err=%v",
+					s.frameCount, len(frame), frame[0], interval, err)
 			}
 		}
 	}
@@ -139,11 +145,9 @@ func (s *VP8Sender) sendDataFrame(data []byte, interval time.Duration) {
 	s.frameCount++
 	frame := buildDataFrame(data)
 	err := s.track.WriteSample(media.Sample{Data: frame, Duration: interval})
-	if err != nil {
-		log.Printf("[VP8TX] WriteSample DATA error frame=%d: %v", s.frameCount, err)
-	} else if s.frameCount <= 10 || s.frameCount%500 == 0 {
-		log.Printf("[VP8TX] DATA frame=%d size=%d dataLen=%d queueLen=%d", s.frameCount, len(frame), len(data), len(s.sendQueue))
-	}
+	// FORENSIC: log every data frame for Linux vs Android comparison
+	log.Printf("[VP8TX-FORENSIC] DATA frame=%d size=%d dataLen=%d first=0x%02x duration=%v err=%v queueLen=%d",
+		s.frameCount, len(frame), len(data), frame[0], interval, err, len(s.sendQueue))
 	// Periodic keyframe to keep SFU happy
 	if s.frameCount%60 == 0 {
 		s.frameCount++
@@ -198,12 +202,15 @@ func ReadVP8Track(track *webrtc.TrackRemote, onData func([]byte), closeCh <-chan
 		// Marker bit = end of frame → process complete frame
 		if pkt.Marker {
 			frameCount++
-			if frameCount <= 3 || frameCount%25 == 0 {
-				if len(frameBuf) > 0 {
-					log.Printf("[VP8RX] frame #%d %d bytes first=0x%02x", frameCount, len(frameBuf), frameBuf[0])
-				}
-			}
 			data := ExtractDataFromPayload(frameBuf)
+			kind := "KEEPALIVE"
+			if data != nil {
+				kind = "DATA"
+			}
+			if frameCount <= 10 || data != nil || frameCount%100 == 0 {
+				log.Printf("[VP8RX-FORENSIC] frame=#%d size=%d first=0x%02x kind=%s dataLen=%d",
+					frameCount, len(frameBuf), frameBuf[0], kind, len(data))
+			}
 			if data != nil {
 				dataCount++
 				if dataCount <= 5 || dataCount%100 == 0 {
