@@ -1,7 +1,9 @@
 package telemost
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
 	"log"
 	"strings"
 	"time"
@@ -9,6 +11,35 @@ import (
 	"github.com/google/uuid"
 	"github.com/pion/webrtc/v4"
 )
+
+// traceLog writes raw WS messages to a trace file for forensic analysis.
+// Set OLCRTC_WS_TRACE to a file path to enable. Disabled by default.
+var wsTraceFile *os.File
+
+func init() {
+	if path := os.Getenv("OLCRTC_WS_TRACE"); path != "" {
+		f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		if err != nil {
+			log.Printf("[WS-TRACE] Failed to open trace file: %v", err)
+			return
+		}
+		wsTraceFile = f
+		log.Printf("[WS-TRACE] Tracing to %s", path)
+	}
+}
+
+func wsTrace(direction string, msg map[string]interface{}) {
+	if wsTraceFile == nil {
+		return
+	}
+	entry := map[string]interface{}{
+		"dir": direction,
+		"ts":  time.Now().UnixMilli(),
+		"msg": msg,
+	}
+	data, _ := json.Marshal(entry)
+	wsTraceFile.Write(append(data, '\n'))
+}
 
 func (p *Peer) sendHello() error {
 	hello := map[string]interface{}{
@@ -68,6 +99,7 @@ func (p *Peer) sendHello() error {
 		},
 	}
 
+	wsTrace("send", hello)
 	p.wsMu.Lock()
 	defer p.wsMu.Unlock()
 	return p.ws.WriteJSON(hello)
@@ -154,6 +186,8 @@ func (p *Peer) handleSignaling() {
 			}
 			return
 		}
+
+		wsTrace("recv", msg)
 
 		// Debug: log all WS message keys
 		keys := make([]string, 0, len(msg))
