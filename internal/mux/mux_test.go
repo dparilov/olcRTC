@@ -596,3 +596,139 @@ func TestBackpressure_CondWakeOnRead(t *testing.T) {
 		t.Errorf("data2 = %q, want %q", data2, "extra")
 	}
 }
+
+// --- Stream Close Signal Tests (Item 7 finish) ---
+
+func TestStreamClosedCh_SignaledOnCloseFrame(t *testing.T) {
+	m := New(1, func([]byte) error { return nil })
+
+	// Create stream via data
+	frame := makeDataFrame(10, 1, 3, []byte("hi"), 0)
+	m.HandleFrame(frame)
+
+	closedCh := m.StreamClosedCh(3)
+
+	// Not closed yet
+	select {
+	case <-closedCh:
+		t.Fatal("should not be closed yet")
+	default:
+	}
+
+	// Send close frame
+	closeFrame := make([]byte, 12)
+	binary.BigEndian.PutUint32(closeFrame[0:4], 10)
+	binary.BigEndian.PutUint16(closeFrame[4:6], 3)
+	binary.BigEndian.PutUint16(closeFrame[6:8], 0)
+	binary.BigEndian.PutUint32(closeFrame[8:12], 0)
+	m.HandleFrame(closeFrame)
+
+	select {
+	case <-closedCh:
+		// OK — signaled
+	case <-time.After(time.Second):
+		t.Fatal("StreamClosedCh not signaled after close frame")
+	}
+}
+
+func TestStreamClosedCh_SignaledOnReset(t *testing.T) {
+	m := New(1, func([]byte) error { return nil })
+
+	frame := makeDataFrame(10, 1, 5, []byte("data"), 0)
+	m.HandleFrame(frame)
+
+	closedCh := m.StreamClosedCh(5)
+
+	m.Reset()
+
+	select {
+	case <-closedCh:
+		// OK
+	case <-time.After(time.Second):
+		t.Fatal("StreamClosedCh not signaled after Reset")
+	}
+}
+
+func TestStreamClosedCh_SignaledOnResetClient(t *testing.T) {
+	m := New(1, func([]byte) error { return nil })
+
+	frame := makeDataFrame(10, 1, 7, []byte("data"), 0)
+	m.HandleFrame(frame)
+
+	closedCh := m.StreamClosedCh(7)
+
+	m.ResetClient(10)
+
+	select {
+	case <-closedCh:
+		// OK
+	case <-time.After(time.Second):
+		t.Fatal("StreamClosedCh not signaled after ResetClient")
+	}
+}
+
+func TestStreamClosedCh_NotSignaledForOtherClient(t *testing.T) {
+	m := New(1, func([]byte) error { return nil })
+
+	frame := makeDataFrame(10, 1, 7, []byte("data"), 0)
+	m.HandleFrame(frame)
+
+	closedCh := m.StreamClosedCh(7)
+
+	m.ResetClient(99) // different client
+
+	select {
+	case <-closedCh:
+		t.Fatal("should NOT be signaled for different client")
+	case <-time.After(50 * time.Millisecond):
+		// OK — not signaled
+	}
+}
+
+func TestEventDrivenStreamPump(t *testing.T) {
+	// Simulates the proxyStream pattern: wait on WaitForData + StreamClosedCh
+	m := New(1, func([]byte) error { return nil })
+
+	dataReady := m.WaitForData(9)
+	closedCh := m.StreamClosedCh(9)
+
+	// No data yet
+	select {
+	case <-dataReady:
+		t.Fatal("should not signal data yet")
+	case <-closedCh:
+		t.Fatal("should not be closed yet")
+	default:
+	}
+
+	// Send data — should wake dataReady
+	frame := makeDataFrame(10, 1, 9, []byte("payload"), 0)
+	m.HandleFrame(frame)
+
+	select {
+	case <-dataReady:
+		// OK
+	case <-time.After(time.Second):
+		t.Fatal("WaitForData not signaled")
+	}
+
+	data := m.ReadStream(9)
+	if string(data) != "payload" {
+		t.Errorf("data = %q, want %q", data, "payload")
+	}
+
+	// Close stream — should wake closedCh
+	closeFrame := make([]byte, 12)
+	binary.BigEndian.PutUint32(closeFrame[0:4], 10)
+	binary.BigEndian.PutUint16(closeFrame[4:6], 9)
+	binary.BigEndian.PutUint16(closeFrame[6:8], 0)
+	binary.BigEndian.PutUint32(closeFrame[8:12], 0)
+	m.HandleFrame(closeFrame)
+
+	select {
+	case <-closedCh:
+		// OK
+	case <-time.After(time.Second):
+		t.Fatal("StreamClosedCh not signaled after close")
+	}
+}

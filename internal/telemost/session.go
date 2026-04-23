@@ -456,14 +456,24 @@ func (p *Peer) reconnect(ctx context.Context) error {
 	p.stopTelemetry()
 	p.gracefulLeave(2 * time.Second)
 
-	// Context-aware cooldown instead of blind sleep
+	// Stop session goroutines and wait for them to finish (event-driven).
+	p.stopSession()
+
+	// Wait for all session goroutines to complete with timeout safety net.
+	goroutinesDone := make(chan struct{})
+	go func() {
+		p.wg.Wait()
+		close(goroutinesDone)
+	}()
+
 	select {
-	case <-time.After(1500 * time.Millisecond):
+	case <-goroutinesDone:
+		log.Println("[RECONNECT] All goroutines stopped")
+	case <-time.After(3 * time.Second):
+		log.Println("[RECONNECT] Goroutine wait timeout (safety net)")
 	case <-ctx.Done():
 		return ctx.Err()
 	}
-
-	p.stopSession()
 
 	if p.dc != nil {
 		p.dc.Close()
@@ -484,9 +494,11 @@ func (p *Peer) reconnect(ctx context.Context) error {
 		p.wsMu.Unlock()
 	}
 
-	// Context-aware cooldown before re-connecting
+	// Brief non-correctness pacing: allow remote side to process close.
+	// This is NOT a sequencing gate — correctness does not depend on this duration.
+	// Connect() will retry independently if the remote is not yet ready.
 	select {
-	case <-time.After(3 * time.Second):
+	case <-time.After(500 * time.Millisecond):
 	case <-ctx.Done():
 		return ctx.Err()
 	}

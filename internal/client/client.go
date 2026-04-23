@@ -581,20 +581,27 @@ func (c *Client) proxyStream(conn net.Conn, sid uint16) {
 		defer close(streamClosed)
 		defer c.mux.CleanupDataChannel(sid)
 
-		ticker := time.NewTicker(10 * time.Millisecond)
-		defer ticker.Stop()
+		dataReady := c.mux.WaitForData(sid)
+		closedCh := c.mux.StreamClosedCh(sid)
 
 		for {
+			// Wait for data-available signal, stream close, or upstream done
 			select {
 			case <-done:
+				// Drain any remaining data before exiting
+				if data := c.mux.ReadStream(sid); len(data) > 0 {
+					writeStreamData(conn, data)
+				}
 				return
-			case <-ticker.C:
+			case <-closedCh:
+				// Drain any remaining data before exiting
+				if data := c.mux.ReadStream(sid); len(data) > 0 {
+					writeStreamData(conn, data)
+				}
+				return
+			case <-dataReady:
 				data := c.mux.ReadStream(sid)
 				if len(data) > 0 && !writeStreamData(conn, data) {
-					return
-				}
-
-				if c.mux.StreamClosed(sid) {
 					return
 				}
 			}

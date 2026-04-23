@@ -47,6 +47,7 @@ type Multiplexer struct {
 	maxStreams    int
 	maxBufferSize int
 	dataReady     map[uint16]chan struct{}
+	streamDone    map[uint16]chan struct{} // closed when stream is closed/reset
 	dataReadyMu   sync.Mutex
 	sendSeq       map[uint16]uint32
 	sendSeqMu     sync.Mutex
@@ -61,6 +62,7 @@ func New(clientID uint32, onSend func([]byte) error) *Multiplexer {
 		maxStreams:    10000,
 		maxBufferSize: 32 * 1024 * 1024,
 		dataReady:     make(map[uint16]chan struct{}),
+		streamDone:    make(map[uint16]chan struct{}),
 		sendSeq:       make(map[uint16]uint32),
 	}
 	m.bufCond = sync.NewCond(&m.mu)
@@ -137,11 +139,11 @@ func (m *Multiplexer) SendData(sid uint16, data []byte) error {
 
 func (m *Multiplexer) CloseStream(sid uint16) error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	if stream, exists := m.streams[sid]; exists {
 		stream.closed = true
 	}
+	m.mu.Unlock()
+	m.signalStreamClosed(sid)
 
 	m.sendSeqMu.Lock()
 	delete(m.sendSeq, sid)
@@ -211,6 +213,7 @@ func (m *Multiplexer) HandleFrame(frame []byte) {
 			stream.closed = true
 		}
 		m.mu.Unlock()
+		m.signalStreamClosed(sid)
 		return
 	}
 
@@ -304,15 +307,19 @@ func (m *Multiplexer) handleControlFrame(control ControlFrame) {
 
 func (m *Multiplexer) ResetClient(clientID uint32) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
+	var closedSids []uint16
 	for streamSid, stream := range m.streams {
 		if stream.ClientID == clientID {
 			stream.closed = true
+			closedSids = append(closedSids, streamSid)
 			delete(m.streams, streamSid)
 		}
 	}
+	m.mu.Unlock()
 
+	for _, sid := range closedSids {
+		m.signalStreamClosed(sid)
+	}
 	m.bufCond.Broadcast() // wake any waiters so they see stream gone
 }
 
@@ -376,19 +383,22 @@ func (m *Multiplexer) GetStream(sid uint16) *Stream {
 
 func (m *Multiplexer) Reset() {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	for _, stream := range m.streams {
+	var allSids []uint16
+	for sid, stream := range m.streams {
 		stream.closed = true
+		allSids = append(allSids, sid)
 	}
-
 	m.streams = make(map[uint16]*Stream)
 	m.nextID = 1
+	m.mu.Unlock()
 
 	m.sendSeqMu.Lock()
 	m.sendSeq = make(map[uint16]uint32)
 	m.sendSeqMu.Unlock()
 
+	for _, sid := range allSids {
+		m.signalStreamClosed(sid)
+	}
 	m.bufCond.Broadcast() // wake any waiters so they see stream gone
 }
 
@@ -416,5 +426,38 @@ func (m *Multiplexer) CleanupDataChannel(sid uint16) {
 	if ch, ok := m.dataReady[sid]; ok {
 		close(ch)
 		delete(m.dataReady, sid)
+	}
+	if ch, ok := m.streamDone[sid]; ok {
+		select {
+		case <-ch:
+		default:
+			close(ch)
+		}
+		delete(m.streamDone, sid)
+	}
+}
+
+// StreamClosedCh returns a channel that is closed when the stream is closed or reset.
+// Safe to call before the stream exists — the channel will be created lazily.
+func (m *Multiplexer) StreamClosedCh(sid uint16) <-chan struct{} {
+	m.dataReadyMu.Lock()
+	defer m.dataReadyMu.Unlock()
+
+	if _, ok := m.streamDone[sid]; !ok {
+		m.streamDone[sid] = make(chan struct{})
+	}
+	return m.streamDone[sid]
+}
+
+func (m *Multiplexer) signalStreamClosed(sid uint16) {
+	m.dataReadyMu.Lock()
+	defer m.dataReadyMu.Unlock()
+
+	if ch, ok := m.streamDone[sid]; ok {
+		select {
+		case <-ch:
+		default:
+			close(ch)
+		}
 	}
 }
