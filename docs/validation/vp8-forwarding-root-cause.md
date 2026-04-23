@@ -61,3 +61,51 @@ For automated E2E testing on one VPS, the test harness must ensure:
 
 This behavior is identical on baseline v2.0.0 and refactored code.
 The transport refactor (Items 5/6/7) did not introduce this behavior.
+
+## Update: Linux cross-machine test (2026-04-23 12:38)
+
+### Scenario: Linux client first (local), Linux server second (VPS)
+
+**VP8 forwarding: YES** — server receives VP8 from client.
+
+```
+09:39:57 VP8RX: codec=video/VP8 ← VP8 from Linux client RECEIVED
+09:39:57 frame #1 20 bytes
+```
+
+**SOCKS tunnel: NO** — reset signal lost.
+
+Client sent reset signal at 12:38:52 (before server connected).
+Server connected at 09:39:55. Reset signal was not re-sent.
+Server never created mux/olcrtc channel.
+
+### Proven: NOT a same-VPS issue
+
+VP8 forwarding works between local Linux and VPS when join order is correct
+(client first, server second). The same-VPS failure was purely due to
+join order, not network topology.
+
+### Additional finding: reset signal timing
+
+In production, the reset signal works because:
+1. Client sends reset at startup (line 109 in client.go)
+2. Server is already in room (joined via bootstrap after seeing room on Disk)
+3. Server receives reset immediately
+
+In test scenario with correct join order:
+1. Client sends reset at startup — server not yet in room
+2. Server joins later — reset already sent and lost
+3. No mechanism to re-send reset when server appears
+
+Production workaround: `onReconnect` callback (line 265) resends reset.
+But initial connect has no equivalent re-send mechanism.
+
+## Updated Comparison Matrix
+
+| Scenario | 1st peer | 2nd peer | Same host? | VP8 works? | Tunnel works? | Why? |
+|----------|----------|----------|-----------|-----------|--------------|------|
+| Production | Android client | VPS server | No | YES | YES | Server joins after reset sent |
+| Test same-VPS | VPS server | VPS client | Yes | NO | NO | Wrong join order |
+| Test cross: srv 1st | VPS server | Local client | No | NO | NO | Wrong join order |
+| Test cross: cnt 1st | Local client | VPS server | No | YES | NO | Reset signal lost (sent before srv) |
+| Test cross: Android 1st | Android | VPS server | No | YES | YES(keepalive) | Correct order + reset timing |
