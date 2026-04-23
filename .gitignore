@@ -255,3 +255,6 @@ build/
 ui/ui
 olcrtc
 olcrtc-linux-amd64
+transport-test
+transport-test-linux
+results.json
