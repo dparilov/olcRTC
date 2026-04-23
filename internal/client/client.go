@@ -226,6 +226,10 @@ func (c *Client) addPeer(
 	peer.SetReconnectCallback(func(dc *webrtc.DataChannel) {
 		c.onReconnect(peerID, dc)
 	})
+	peer.SetPeerJoinedCallback(func(pid string) {
+		log.Printf("[CLIENT] New peer %s joined — re-sending reset signal", pid)
+		c.sendResetSignal()
+	})
 
 	c.peers = append(c.peers, peer)
 

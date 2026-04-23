@@ -73,6 +73,7 @@ type Peer struct {
 	ackWaiters      map[string]chan struct{}
 	serverHelloICE  chan []webrtc.ICEServer // TURN servers from serverHello
 	onEnded         func(string)
+	onPeerJoined    func(string) // called when new participant joins room
 	trafficShape    TrafficShape
 	sessionCloseCh  chan struct{}
 	wg              sync.WaitGroup
@@ -105,6 +106,10 @@ func (p *Peer) SetTrafficShape(shape TrafficShape) {
 
 func (p *Peer) SetReconnectCallback(cb func(*webrtc.DataChannel)) {
 	p.onReconnect = cb
+}
+
+func (p *Peer) SetPeerJoinedCallback(cb func(string)) {
+	p.onPeerJoined = cb
 }
 
 func NewPeer(roomURL, name string, onData func([]byte)) (*Peer, error) {

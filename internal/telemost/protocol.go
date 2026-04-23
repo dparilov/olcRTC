@@ -234,6 +234,9 @@ func (p *Peer) handleSignaling() {
 								name, _ = meta["name"].(string)
 							}
 							log.Printf("[WS] Participant joined: %s (%s)", name, pid)
+							if p.onPeerJoined != nil {
+								p.onPeerJoined(pid)
+							}
 						}
 					}
 				}
