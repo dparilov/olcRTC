@@ -26,18 +26,20 @@ var vp8Interframe = []byte{
 func (p *Peer) Send(data []byte) error {
 	// Wait up to 5s for DC to become ready (subscriber DC may arrive after publisher DC closes)
 	if p.dc == nil || p.dc.ReadyState() != webrtc.DataChannelStateOpen {
-		deadline := time.Now().Add(5 * time.Second)
-		for time.Now().Before(deadline) {
-			time.Sleep(50 * time.Millisecond)
-			if p.dc != nil && p.dc.ReadyState() == webrtc.DataChannelStateOpen {
-				break
+		select {
+		case <-p.dcReadyCh:
+			// DC is ready
+		case <-time.After(5 * time.Second):
+			if p.dc == nil || p.dc.ReadyState() != webrtc.DataChannelStateOpen {
+				log.Printf("[SEND] DC not ready after 5s wait")
+				return fmt.Errorf("datachannel not ready")
 			}
+		case <-p.closeCh:
+			return fmt.Errorf("peer closed")
 		}
-		if p.dc == nil || p.dc.ReadyState() != webrtc.DataChannelStateOpen {
-			log.Printf("[SEND] DC not ready after 5s wait")
-			return fmt.Errorf("datachannel not ready")
+		if p.dc != nil && p.dc.ReadyState() == webrtc.DataChannelStateOpen {
+			log.Printf("[SEND] DC became ready after wait (label=%s)", p.dc.Label())
 		}
-		log.Printf("[SEND] DC became ready after wait (label=%s)", p.dc.Label())
 	}
 
 	if p.sendQueueClosed.Load() {

@@ -1,6 +1,7 @@
 package mux
 
 import (
+	"time"
 	"encoding/binary"
 	"sync"
 	"testing"
@@ -538,4 +539,60 @@ func makeDataFrame(clientID uint32, _ uint32, sid uint16, data []byte, seq uint3
 	binary.BigEndian.PutUint32(frame[8:12], seq)
 	copy(frame[12:], data)
 	return frame
+}
+
+// --- Backpressure / Cond-driven tests ---
+
+func TestBackpressure_CondWakeOnRead(t *testing.T) {
+	m := New(1, func([]byte) error { return nil })
+	m.maxBufferSize = 10 // very small buffer
+
+	// Fill buffer with 10 bytes
+	frame := makeDataFrame(10, 1, 1, []byte("0123456789"), 0)
+	m.HandleFrame(frame)
+
+	// Verify buffer is full
+	m.mu.RLock()
+	stream := m.streams[1]
+	bufLen := len(stream.recvBuf)
+	m.mu.RUnlock()
+	if bufLen != 10 {
+		t.Fatalf("bufLen = %d, want 10", bufLen)
+	}
+
+	// HandleFrame with more data should block until ReadStream drains
+	done := make(chan struct{})
+	go func() {
+		frame2 := makeDataFrame(10, 1, 1, []byte("extra"), 1)
+		m.HandleFrame(frame2) // will block in waitForBufferSpace
+		close(done)
+	}()
+
+	// Give HandleFrame goroutine time to enter wait
+	select {
+	case <-done:
+		t.Fatal("HandleFrame should be blocked waiting for buffer space")
+	case <-time.After(50 * time.Millisecond):
+		// OK - it's blocked
+	}
+
+	// Drain buffer — should wake the waiter
+	data := m.ReadStream(1)
+	if len(data) != 10 {
+		t.Fatalf("read %d bytes, want 10", len(data))
+	}
+
+	// Now HandleFrame should complete
+	select {
+	case <-done:
+		// OK
+	case <-time.After(2 * time.Second):
+		t.Fatal("HandleFrame still blocked after ReadStream drained buffer")
+	}
+
+	// Verify the extra data was received
+	data2 := m.ReadStream(1)
+	if string(data2) != "extra" {
+		t.Errorf("data2 = %q, want %q", data2, "extra")
+	}
 }

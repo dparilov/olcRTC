@@ -5,7 +5,6 @@ import (
 	"encoding/binary"
 	"errors"
 	"sync"
-	"time"
 
 	"github.com/openlibrecommunity/olcrtc/internal/logger"
 )
@@ -44,6 +43,7 @@ type Multiplexer struct {
 	clientID      uint32
 	onSend        func([]byte) error
 	mu            sync.RWMutex
+	bufCond       *sync.Cond // signaled when any stream's recvBuf is drained
 	maxStreams    int
 	maxBufferSize int
 	dataReady     map[uint16]chan struct{}
@@ -53,7 +53,7 @@ type Multiplexer struct {
 }
 
 func New(clientID uint32, onSend func([]byte) error) *Multiplexer {
-	return &Multiplexer{
+	m := &Multiplexer{
 		streams:       make(map[uint16]*Stream),
 		nextID:        1,
 		clientID:      clientID,
@@ -63,6 +63,8 @@ func New(clientID uint32, onSend func([]byte) error) *Multiplexer {
 		dataReady:     make(map[uint16]chan struct{}),
 		sendSeq:       make(map[uint16]uint32),
 	}
+	m.bufCond = sync.NewCond(&m.mu)
+	return m
 }
 
 func (m *Multiplexer) OpenStream() uint16 {
@@ -310,6 +312,8 @@ func (m *Multiplexer) ResetClient(clientID uint32) {
 			delete(m.streams, streamSid)
 		}
 	}
+
+	m.bufCond.Broadcast() // wake any waiters so they see stream gone
 }
 
 // waitForBufferSpace releases m.mu and waits until the stream's recvBuf has
@@ -325,9 +329,8 @@ func (m *Multiplexer) waitForBufferSpace(sid uint16, clientID uint32, need int) 
 		if len(stream.recvBuf)+need <= m.maxBufferSize {
 			return stream
 		}
-		m.mu.Unlock()
-		time.Sleep(5 * time.Millisecond)
-		m.mu.Lock()
+		// Wait for signal from ReadStream (buffer drained) instead of polling.
+		m.bufCond.Wait()
 	}
 }
 
@@ -342,6 +345,7 @@ func (m *Multiplexer) ReadStream(sid uint16) []byte {
 
 	data := stream.recvBuf
 	stream.recvBuf = make([]byte, 0)
+	m.bufCond.Broadcast() // wake waitForBufferSpace waiters
 	return data
 }
 
@@ -384,6 +388,8 @@ func (m *Multiplexer) Reset() {
 	m.sendSeqMu.Lock()
 	m.sendSeq = make(map[uint16]uint32)
 	m.sendSeqMu.Unlock()
+
+	m.bufCond.Broadcast() // wake any waiters so they see stream gone
 }
 
 func (m *Multiplexer) UpdateSendFunc(onSend func([]byte) error) {

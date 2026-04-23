@@ -176,7 +176,11 @@ func (c *Client) sendFrame(frame []byte) error {
 }
 
 func waitUntilPeersCanSend(peers []*telemost.Peer) {
-	for {
+	// Poll with backoff for peer send readiness.
+	// TODO(item7-followup): replace with event-driven readiness signal from Peer.
+	const maxWait = 5 * time.Second
+	deadline := time.Now().Add(maxWait)
+	for time.Now().Before(deadline) {
 		canSend := true
 		for _, peer := range peers {
 			if !peer.CanSend() {
@@ -184,13 +188,12 @@ func waitUntilPeersCanSend(peers []*telemost.Peer) {
 				break
 			}
 		}
-
 		if canSend {
 			return
 		}
-
 		time.Sleep(10 * time.Millisecond)
 	}
+	log.Println("[BACKPRESSURE] waitUntilPeersCanSend timed out after 5s")
 }
 
 func (c *Client) nextPeer() (*telemost.Peer, error) {

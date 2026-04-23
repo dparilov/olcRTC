@@ -46,6 +46,7 @@ type Peer struct {
 	onReconnect     func(*webrtc.DataChannel)
 	reconnectCh     chan struct{}
 	closeCh         chan struct{}
+	dcReadyCh       chan struct{} // closed when DataChannel is open
 	keepAliveCh     chan struct{}
 	telemetryCh     chan struct{}
 	lastReconnect   time.Time
@@ -119,6 +120,7 @@ func NewPeer(roomURL, name string, onData func([]byte)) (*Peer, error) {
 		onData:         onData,
 		reconnectCh:    make(chan struct{}, 1),
 		closeCh:        make(chan struct{}),
+		dcReadyCh:      make(chan struct{}),
 		keepAliveCh:    make(chan struct{}),
 		sessionCloseCh: make(chan struct{}),
 		telemetryCh:    make(chan struct{}, 1),

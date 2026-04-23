@@ -49,6 +49,7 @@ func (p *Peer) resetSession() (chan struct{}, chan struct{}) {
 
 	p.keepAliveCh = make(chan struct{})
 	p.sessionCloseCh = make(chan struct{})
+	p.dcReadyCh = make(chan struct{})
 	return p.keepAliveCh, p.sessionCloseCh
 }
 
@@ -176,6 +177,12 @@ func (p *Peer) Connect(ctx context.Context) error {
 	keepAliveCh, sessionCloseCh := p.resetSession()
 	p.dc.OnOpen(func() {
 		log.Println("DataChannel opened")
+		// Signal DC readiness for Send() waiters
+		select {
+		case <-p.dcReadyCh:
+		default:
+			close(p.dcReadyCh)
+		}
 
 		// Forward sendQueue -> VP8 data tunnel (replaces DC-based workers).
 		p.wg.Add(1)
@@ -448,7 +455,13 @@ func (p *Peer) reconnect(ctx context.Context) error {
 
 	p.stopTelemetry()
 	p.gracefulLeave(2 * time.Second)
-	time.Sleep(1500 * time.Millisecond)
+
+	// Context-aware cooldown instead of blind sleep
+	select {
+	case <-time.After(1500 * time.Millisecond):
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 
 	p.stopSession()
 
@@ -471,7 +484,12 @@ func (p *Peer) reconnect(ctx context.Context) error {
 		p.wsMu.Unlock()
 	}
 
-	time.Sleep(3 * time.Second)
+	// Context-aware cooldown before re-connecting
+	select {
+	case <-time.After(3 * time.Second):
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 
 	conn, err := GetConnectionInfo(p.roomURL, p.name)
 	if err != nil {
