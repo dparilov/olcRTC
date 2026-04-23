@@ -185,10 +185,10 @@ func (p *Peer) handleSignaling() {
 			p.sendAck(uid)
 		}
 
-		// updateDescription / upsertDescription — just ACK.
-		// kulikov0 pattern: don't send extra setSlots or requestSubscriberOffer here.
-		// SFU will send a new subscriberSdpOffer if renegotiation is needed.
+		// upsertDescription — new participant joined. Re-request video slots
+		// so SFU triggers renegotiation and forwards VP8 tracks.
 		if ud, ok := msg["upsertDescription"].(map[string]interface{}); ok {
+			newPeer := false
 			if descs, ok := ud["description"].([]interface{}); ok {
 				for _, d := range descs {
 					if dm, ok := d.(map[string]interface{}); ok {
@@ -199,11 +199,16 @@ func (p *Peer) handleSignaling() {
 								name, _ = meta["name"].(string)
 							}
 							log.Printf("[WS] Participant joined: %s (%s)", name, pid)
+							newPeer = true
 						}
 					}
 				}
 			}
 			p.sendAck(uid)
+			if newPeer {
+				log.Println("[WS] New peer detected — re-requesting video slots for VP8 forwarding")
+				p.requestVideoSlots()
+			}
 		}
 
 		if _, ok := msg["updateDescription"]; ok {
