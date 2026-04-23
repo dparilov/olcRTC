@@ -45,7 +45,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 
-private const val APP_VERSION = "2.0.0-alpha"
+private const val APP_VERSION = "2.1.0"
 
 class MainActivity : ComponentActivity() {
     private val controller by lazy { TelemostTunnelController(applicationContext) }
