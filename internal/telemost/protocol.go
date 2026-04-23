@@ -185,10 +185,11 @@ func (p *Peer) handleSignaling() {
 			p.sendAck(uid)
 		}
 
-		// upsertDescription — new participant joined. Re-request video slots
-		// so SFU triggers renegotiation and forwards VP8 tracks.
+		// updateDescription / upsertDescription — just ACK.
+		// NOTE: requestVideoSlots() after upsertDescription was attempted but
+		// did NOT produce SFU renegotiation. Rolled back per forensic memo.
+		// See docs/validation/e2e-test-findings.md for details.
 		if ud, ok := msg["upsertDescription"].(map[string]interface{}); ok {
-			newPeer := false
 			if descs, ok := ud["description"].([]interface{}); ok {
 				for _, d := range descs {
 					if dm, ok := d.(map[string]interface{}); ok {
@@ -199,16 +200,11 @@ func (p *Peer) handleSignaling() {
 								name, _ = meta["name"].(string)
 							}
 							log.Printf("[WS] Participant joined: %s (%s)", name, pid)
-							newPeer = true
 						}
 					}
 				}
 			}
 			p.sendAck(uid)
-			if newPeer {
-				log.Println("[WS] New peer detected — re-requesting video slots for VP8 forwarding")
-				p.requestVideoSlots()
-			}
 		}
 
 		if _, ok := msg["updateDescription"]; ok {
