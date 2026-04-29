@@ -1,0 +1,11 @@
+# .agent/config.yaml — openclaw-agent-memory-infra project configuration
+# All path values support ~ expansion.
+
+# Pyrogram session file path (without .session extension)
+# pyrogram_session: ~/.openclaw/session
+
+# Directory for read-topic.py checkpoints
+# checkpoint_dir: ~/.openclaw/agents/default/checkpoints
+
+# Base directory for OpenClaw agent session files
+# agents_base: ~/.openclaw/agents
