@@ -249,3 +249,5 @@ go.work.sum
 # .idea/
 # .vscode/
 build/
+# Agent memory artifacts (runtime/private, not for version control)
+.agent/memory/
