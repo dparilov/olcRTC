@@ -467,6 +467,72 @@ def load_and_migrate(path: Path) -> list[dict]:
     return migrated
 
 
+def cmd_reclassify(
+    topic_id: str,
+    candidate_id: str,
+    memory_dir: Path,
+    fact_type: str | None = None,
+    risk: str | None = None,
+    status: str | None = None,
+    dry_run: bool = False,
+) -> int:
+    """Reclassify an existing candidate: override fact_type, risk, and/or status.
+
+    Needed because auto-extracted candidates may all be typed as 'fact'.
+    Example:
+        python manage-candidates.py 7301 --reclassify abc123 \
+            --fact-type testing_strategy --risk medium --status needs-approval
+    """
+    candidates = _load_candidates(topic_id, memory_dir)
+    match = next((c for c in candidates if c.get("id") == candidate_id), None)
+    if match is None:
+        print(f"ERROR: candidate {candidate_id!r} not found for topic {topic_id}", file=sys.stderr)
+        return 1
+
+    changed: list[str] = []
+
+    # Apply field overrides
+    if fact_type is not None and match.get("type") != fact_type:
+        match["type"] = fact_type
+        changed.append(f"type={fact_type}")
+
+    if risk is not None and match.get("risk") != risk:
+        match["risk"] = risk
+        changed.append(f"risk={risk}")
+
+    # Recompute classification from current type+risk unless explicit status override
+    if changed and status is None:
+        classification = derive_classification(
+            match.get("type", "fact"),
+            match.get("confidence", "medium"),
+            match.get("risk", "medium"),
+            match.get("claim", ""),
+        )
+        new_status = classification["status"]
+        if match.get("status") != new_status:
+            match["status"] = new_status
+            changed.append(f"status={new_status} (auto-recomputed)")
+
+    # Explicit status override wins over auto-recomputed
+    if status is not None and match.get("status") != status:
+        match["status"] = status
+        changed.append(f"status={status} (override)")
+
+    if not changed:
+        print(f"No changes for candidate {candidate_id}")
+        return 0
+
+    match["reclassified_at"] = datetime.now(timezone.utc).isoformat()
+
+    if dry_run:
+        print(f"DRY RUN — would update {candidate_id}: {', '.join(changed)}")
+        return 0
+
+    _save_candidates(topic_id, candidates, memory_dir)
+    print(f"Reclassified {candidate_id}: {', '.join(changed)}")
+    return 0
+
+
 def cmd_migrate_legacy(topic_id: str, memory_dir: Path, dry_run: bool = False) -> None:
     """Fix 4 — persist v0→v1 migration to disk."""
     cf = candidates_file(memory_dir, topic_id)
@@ -807,6 +873,8 @@ def main() -> int:
                        help="Validate all candidates against schema v1 (read-only; does not persist migration)")
     group.add_argument("--migrate-legacy", action="store_true",
                        help="Persist v0→v1 schema migration to disk (use --dry-run to preview)")
+    group.add_argument("--reclassify", metavar="CANDIDATE_ID",
+                       help="Override type/risk/status on an existing candidate")
 
     # Provenance flags for --add (Fix A1 + Fix 3)
     parser.add_argument("--source-kind", default="session_history",
@@ -825,6 +893,18 @@ def main() -> int:
     parser.add_argument("--summary", default=None, help="Human-readable context for reviewers")
     parser.add_argument("--suggested-target", default=None,
                         help="Target memory file path for promotion")
+
+    # Reclassify extras
+    parser.add_argument("--fact-type", default=None,
+                        help="New fact type slug (for --reclassify)")
+    parser.add_argument("--risk-override", default=None, dest="risk_override",
+                        choices=["low", "medium", "high"],
+                        help="Override risk level for --reclassify. "
+                             "Use this instead of --risk to explicitly set medium.")
+    parser.add_argument("--status-override", default=None, dest="status_override",
+                        choices=["candidate", "auto-promoted", "needs-approval",
+                                 "approved", "rejected", "obsolete", "duplicate"],
+                        help="Force status (for --reclassify)")
 
     # Approve/reject extras
     parser.add_argument("--reviewer", default=None, help="Reviewer name/ID (for --approve/--reject)")
@@ -876,6 +956,14 @@ def main() -> int:
         return cmd_validate(topic_id, memory_dir)
     elif args.migrate_legacy:
         cmd_migrate_legacy(topic_id, memory_dir, dry_run=args.dry_run)
+    elif args.reclassify:
+        return cmd_reclassify(
+            topic_id, args.reclassify, memory_dir,
+            fact_type=args.fact_type,
+            risk=args.risk_override,
+            status=args.status_override,
+            dry_run=args.dry_run,
+        )
 
     return 0
 
