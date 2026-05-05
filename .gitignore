@@ -249,5 +249,9 @@ go.work.sum
 # .idea/
 # .vscode/
 build/
-# Agent memory artifacts (runtime/private, not for version control)
-.agent/memory/
+# Agent memory runtime artifacts (generated, potentially sensitive — do not commit)
+.agent/memory/index/
+.agent/memory/raw/
+.agent/memory/candidates/
+.agent/memory/.locks/
+# working/, promoted/, wiki/ are intentionally tracked (reviewed compiled Markdown)
